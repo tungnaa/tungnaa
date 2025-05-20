@@ -1,0 +1,71 @@
+# CUSTOMISE:
+
+site_name: tungnaa
+repo_url: https://github.com/tungnaa/tungnaa
+repo_name: tungnaa
+
+# ONLY CUSTOMISE IF NEEDED:
+
+theme:
+  name: "material"
+  # logo: assets/logo/tungnaa_icon.png
+  # favicon: assets/favicon/favicon.ico
+  palette:
+
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: yellow
+      accent: blue grey
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: yellow
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - toc.follow
+    - content.code.copy
+    - content.code.select
+
+copyright: ©️ Victor Shepardson and Jonathan Chaim Reus
+
+extra:
+  generator: false
+  social:
+    - icon: material/link
+      link: https://iil.is
+      name: Intelligent Instruments Lab
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+
+# extra_css:
+#   - stylesheets/extra.css
+
+plugins:
+  - search  
+  - mkdocstrings
+  - include-markdown
+  - autorefs
+  - gen-files:
+      scripts:
+      - scripts/gen_ref_pages.py  

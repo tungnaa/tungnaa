@@ -1,0 +1,48 @@
+[tool.poetry]
+name = "tungnaa"
+version = "0.1.0b"
+description = "tungnaa is a text-to-voice model family and musical instrument"
+authors = ["Victor Shepardson <victor.shepardson@gmail.com>", "Jonathan Chaim Reus <studio@jonathanreus.com>"]
+license = "modified GPLv3"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.14"
+numpy = "<2.0.0"
+torch = "~2.6.0"
+normflows = "^1.7.3"
+transformers = "^4.27.1"
+fire = "^0.4.0"
+scikit-learn = "^1.6.1"
+soundfile = "^0.13.1"
+
+[tool.poetry.group.train.dependencies]
+torchaudio = "^2.0.0"
+tqdm = "^4.64"
+matplotlib = "^3.7.1"
+ipykernel = "^6.29.4"
+tensorboard = "^2.12.0"
+pandas = "^2.2.2"
+odfpy = "^1.4.1"
+
+[tool.poetry.group.gui.dependencies]
+PySide6 = "^6.4.3"
+pyqtgraph = "^0.13.2"
+python-osc = "^1.8.1"
+sounddevice = "^0.4.6"
+
+[tool.poetry.group.dev.dependencies]
+mkdocs = "^1.5.3"
+mkdocstrings = {extras = ["python"], version = "^0.29.1"}
+mkdocs-gen-files = "^0.5.0"
+mkdocs-include-markdown-plugin = "^6.0.4"
+mkdocs-material = "^9.4.8"
+mkdocs-material-extensions = "^1.3"
+mkdocs-autorefs = "^1.4.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+tungnaa = 'tungnaa.__main__:_main'

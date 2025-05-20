@@ -2,13 +2,11 @@
 
 Training and GUI inference for interactive artistic text-to-voice models.
 
-<!-- Contains a fork of [RAVE](https://github.com/victor-shepardson/RAVE/) as a submodule. -->
-
 # Installation
 
 Poetry is used for packaging and dependency management. Conda is used for environments and Python version management, and may be replaced by virtualenv or similar.
 
-1. `cd interactive-voice`
+1. `cd tungnaa`
 2. `conda create -n tungnaa python=3.10 ffmpeg`
 3. `conda activate tungnaa`
 4. `poetry install`
@@ -41,13 +39,6 @@ SuperCollider:
 
 ```
 tungnaa run --tts models/tts/rtalign_044_jvs.ckpt --latent_audio
-```
-
-## Using run.sh (for research purposes)
-Makes it easy to quickly startup Tungnaa loaded with one of our favorite checkpoints.
-- [ ] #todo reqwrite this for new tungnaa CLI, DVC directories
-```
-source run.sh model <jvs|jvs1k|jvsmel|vctk> <audio_device_num>
 ```
 
 # Training Models
@@ -141,11 +132,9 @@ run `mkdocs serve` to build and view documentation
 
 run `mkdocs gh-deploy` to deploy to github pages
 
-
 # Non-Python Dependencies
 
 - Poetry (https://python-poetry.org/) for packaging
-- DVC (https://dvc.org/) for storing models
 
 # Python Dependencies
 

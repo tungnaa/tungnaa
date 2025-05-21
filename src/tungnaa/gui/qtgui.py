@@ -389,6 +389,13 @@ class RaveLatents(QtWidgets.QWidget):
         """
         self.latents[latent][0].setValue(value)
 
+    def add_latent_bias(self, latent:int, value:float):
+        """
+        Add a small value to the current bias value of a latent in the GUI
+        """
+        newval = self.latents[latent][0].value() + value;
+        self.latents[latent][0].setValue(newval)
+
     def reset_latent_biases(self, value:float=0.0):
         """
         Reset all latent biases to 0.0
@@ -537,6 +544,16 @@ class OSCController(threading.Thread):
             self.context.latents.set_latent_bias(latent, bias)
             print(f"Set latent {latent} bias: {bias}")
 
+        def osc_add_bias(addr:str, latent:int, bias:float) -> None:
+            """Set add a value to the current vocoder latent bias
+            latent      int index of latent
+            bias        float amount to add to bias (usually a small value, will clip if larger than +-3.0)
+
+            """
+            self.context.latents.add_latent_bias(latent, bias)
+            print(f"Add {bias} to latent {latent} bias")
+
+
         def osc_reset_biases(addr:str) -> None:
             """Reset all biases to 0.0"""
             self.context.latents.reset_latent_biases()
@@ -602,6 +619,14 @@ class OSCController(threading.Thread):
             self.context.set_temperature(temp)
             print(f"Set sampling temp {temp}")
 
+        def osc_add_temperature(addr:str, temp:float) -> None:
+            """Add a small value to the generator sampling temperature (Generator Only)
+            temp    float value to add to temperature (usually below 1.0) - will clip at 0 and a max value
+
+            """
+            self.context.add_temperature(temp)
+            print(f"Add {temp} to sampling temp")
+
         def osc_sampler_stop_at_end(addr:str, enable:bool) -> None:
             """ Enable/disable Sampler stop-at-end loop point
             enable     bool true or false
@@ -664,6 +689,7 @@ class OSCController(threading.Thread):
         self.osc_dispatcher.map("/reset", osc_reset)
 
         self.osc_dispatcher.map("/set_bias", osc_set_bias)
+        self.osc_dispatcher.map("/add_bias", osc_add_bias)
         self.osc_dispatcher.map("/reset_biases", osc_reset_biases)
 
         self.osc_dispatcher.map("/generate_stop_at_end", osc_generate_stop_at_end)
@@ -673,6 +699,7 @@ class OSCController(threading.Thread):
         self.osc_dispatcher.map("/set_token", osc_set_alignment_as_token_idx)
         self.osc_dispatcher.map("/set_alignment", osc_set_alignment_normalized)
         self.osc_dispatcher.map("/set_temperature", osc_set_temperature)
+        self.osc_dispatcher.map("/add_temperature", osc_add_temperature)
 
         self.osc_dispatcher.map("/sampler_stop_at_end", osc_sampler_stop_at_end)
         self.osc_dispatcher.map("/set_sampler_step", osc_set_sampler_step)
@@ -1179,6 +1206,15 @@ class MainWindow(QtWidgets.QMainWindow):
             temp=0
         self.temperature_slider.setValue(temp)
         self.backend.set_temperature(temp)
+
+    def add_temperature(self, temp:float) -> None:
+        """
+        Add a small value to the inference temperature (used by OSC/MIDI)
+
+        Args:
+            temp    value that will be added to inference temperature, usually small, temperature will clip at [0,2]
+        """
+        self.set_temperature(self.temperature_slider.value() + temp)
 
     def toggle_alignment_paint(self, toggle:bool):
         if toggle:

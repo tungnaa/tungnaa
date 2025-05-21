@@ -18,6 +18,7 @@ import pythonosc
 import pythonosc.osc_server
 
 import tungnaa.gui
+from tungnaa.gui.downloads import dl_model
 
 # multiprocessing: need to use spawn (no fork on mac, no forkserver on windows)
 # note, this may preclude pyinstaller...
@@ -1244,6 +1245,7 @@ def main(
     profile:bool=False,
     text:str|None=None,
     sampler_text:str|None=None,
+    repo='Intelligent-Instruments-Lab/tungnaa-models-public',
 ):
     """Tungnaa Text to Voice
     
@@ -1305,6 +1307,14 @@ def main(
             )
     else:
         sender = None
+
+    # if tts is not a local file, download model from repo
+    # also sets the vocoder unless it it explicitly set to something else
+    try:
+        with open(tts): pass
+    except FileNotFoundError:
+        print(f'searching remote repo for model "{tts}"...')
+        tts, vocoder = dl_model(repo, tts, vocoder)
 
     backend = tungnaa.gui.backend.Backend(
         checkpoint=tts, 

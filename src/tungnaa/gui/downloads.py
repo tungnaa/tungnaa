@@ -11,7 +11,7 @@ def get_metadata_files(repo):
         if file.startswith('/'):
             file = file[1:]
         # print(file)
-        yield hf.hf_hub_download(repo_id=repo, filename=file)
+        yield hf.hf_hub_download(repo_id=repo, filename=file)    
 
 def read_markdown(f):
     with open(f, 'r') as file:
@@ -21,10 +21,21 @@ def read_markdown(f):
     return m
 
 def get_markdown(repo):
-    markdown = {}
     for f in get_metadata_files(repo):
         k = Path(f).stem
         yield (k, read_markdown(f))
+
+def dl_model(repo, tts, vocoder):
+    for n,m in get_markdown(repo):
+        if n==tts:
+            tts_hf = f'models/tts/{tts}.ckpt'
+            tts = hf.hf_hub_download(repo_id=repo, filename=tts_hf)
+            print(f'{tts=}')
+            if vocoder is None:
+                voc_hf = f'models/vocoder/{m.Meta["vocoder"]}'
+                vocoder = hf.hf_hub_download(repo_id=repo, filename=voc_hf)
+                print(f'{vocoder=}')
+            return tts, vocoder
 
 def main(repo='Intelligent-Instruments-Lab/tungnaa-models-public'):
     for n,m in get_markdown(repo):

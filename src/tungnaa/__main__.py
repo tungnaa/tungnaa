@@ -39,6 +39,10 @@ def _main():
         from tungnaa.train import resume
         fire.Fire(resume, fire_args, "tungnaa resume")
 
+    elif cmd in ['list-models', 'list_models']:
+        from tungnaa.gui.downloads import main
+        fire.Fire(main, fire_args)
+
     else:
         help() 
 

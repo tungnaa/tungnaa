@@ -4,14 +4,7 @@ Training and GUI inference for interactive artistic text-to-voice models.
 
 # Installation
 
-Poetry is used for packaging and dependency management. Conda is used for environments and Python version management, and may be replaced by virtualenv or similar.
-
-1. `cd tungnaa`
-2. `conda create -n tungnaa python=3.10 ffmpeg`
-3. `conda activate tungnaa`
-4. `poetry install`
-
-Note that poetry should not be installed in the project environment, but rather from the system package manager, with pipx, or in a separate environment.
+`pip install tungnaa`
 
 # Usage
 
@@ -121,6 +114,15 @@ If you were to use all three options, you would get:
 `"csvval:[dataset:speaker] original text"`
 
 # Developing
+
+Poetry is used for packaging and dependency management. Conda is used for environments and Python version management, and may be replaced by virtualenv or similar.
+
+1. `cd tungnaa`
+2. `conda create -n tungnaa python=3.12 ffmpeg`
+3. `conda activate tungnaa`
+4. `poetry install`
+
+Note that poetry should not be installed in the project environment, but rather from the system package manager, with pipx, or in a separate environment.
 
 To add a dependency, use `poetry add`, or edit `pyproject.toml` and then run `poetry lock; poetry install`.
 

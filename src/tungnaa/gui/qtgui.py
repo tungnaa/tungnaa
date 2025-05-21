@@ -1223,8 +1223,9 @@ class MainWindow(QtWidgets.QMainWindow):
 # Main entry point for Fire
 def main(
     # models
-    tts:Path,
+    tts:Path='tungnaa_119_vctk',
     vocoder:Path=None,
+    repo='Intelligent-Instruments-Lab/tungnaa-models-public',
     # output modes
     synth_audio:bool=True,
     latent_audio:bool=False,
@@ -1245,13 +1246,13 @@ def main(
     profile:bool=False,
     text:str|None=None,
     sampler_text:str|None=None,
-    repo='Intelligent-Instruments-Lab/tungnaa-models-public',
 ):
     """Tungnaa Text to Voice
     
     Args:
-        tts: path to TTS model
+        tts: path to TTS model, or name of model in repo
         vocoder: path to vocoder model
+        repo: huggingface repo to search for models
 
         synth_audio: send stereo audio from Python
         latent_audio: pack latents into a mono audio signal, 

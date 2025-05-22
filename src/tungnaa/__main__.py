@@ -4,11 +4,14 @@ import fire
 def help():
     print("""
     available subcommands:
-        run: run tungnaa instrument
-        devices: list audio devices
-        prep: data preprocessing for training
-        trainer: run a new tungnaa training (GPU recommended)
-        resume: create a Trainer from checkpoint
+        run: run Tungnaá
+        list-models: list available public models from the Intelligent Instruments Lab
+        devices: display a list of audio devices on your system
+    
+    model training subcommands:
+        prep:       data preprocessing step before training a model
+        trainer:    start a new Tungnaá model training (GPU recommended)
+        resume:     create a Trainer from an existing training checkpoint
     """)
 
 def _main():

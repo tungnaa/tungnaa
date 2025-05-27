@@ -818,20 +818,22 @@
 <p><code>pip install tungnaa[train]</code> (if you are installing on a server to train models)</p>
 <h1 id="usage">Usage</h1>
 <p><code>tungnaa --help</code></p>
-<h1 id="models-from-huggingface">Models from Huggingface</h1>
-<p><code>git clone git@hf.co:intelligent-instruments-Lab/tungnaa</code></p>
+<!-- # Models from Huggingface -->
+<!-- `git clone git@hf.co:intelligent-instruments-Lab/tungnaa` -->
+
 <h2 id="running-with-the-python-audio-engine">Running with the Python Audio Engine</h2>
 <ul>
 <li>[ ] #todo model selection from the Tungnaa gui, including block size and sample rate that match system (currently not possible to have a SR mismatch)</li>
 <li>[ ] #todo audio device selection from the Tungnaa gui</li>
 </ul>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>tungnaa<span class="w"> </span>run<span class="w"> </span>--tts<span class="w"> </span>models/tts/rtalign_044_jvs.ckpt<span class="w"> </span>--vocoder<span class="w"> </span>models/vocoder/rave3-jvs-warm200k-lobeta_c052f53b23_streaming.ts<span class="w"> </span>--audio-out<span class="w"> </span>default
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>tungnaa<span class="w"> </span>run<span class="w"> </span>--audio-out<span class="w"> </span>default
 </span></code></pre></div>
+<p>use <code>tungnaa list-devices</code> to get audio devices by index</p>
 <h2 id="using-supercollider-puredata-or-max-as-audio-engine">Using SuperCollider, PureData or Max as Audio Engine</h2>
 <p>If <code>--latent-audio</code> switch is enabled, Tungnaa will stream RAVE latent trajectories over a single audio-rate channel, which can be piped into another audio engine running the RAVE vocoder. The piping can be done relatively easily on Linux using JACK, and on MacOS using Blackhole.</p>
 <p>SuperCollider:
 <code>sclang supercollider/rtvoice-demo.scd</code> </p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>tungnaa run --tts models/tts/rtalign_044_jvs.ckpt --latent_audio
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>tungnaa<span class="w"> </span>run<span class="w"> </span>--latent_audio
 </span></code></pre></div>
 <h1 id="training-models">Training Models</h1>
 <h2 id="vocoder-training">vocoder training</h2>

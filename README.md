@@ -12,9 +12,8 @@ Training and GUI inference for interactive artistic text-to-voice models.
 
 `tungnaa --help`
 
-# Models from Huggingface
-
-`git clone git@hf.co:intelligent-instruments-Lab/tungnaa`
+<!-- # Models from Huggingface -->
+<!-- `git clone git@hf.co:intelligent-instruments-Lab/tungnaa` -->
 
 ## Running with the Python Audio Engine
 
@@ -22,8 +21,10 @@ Training and GUI inference for interactive artistic text-to-voice models.
 - [ ] #todo audio device selection from the Tungnaa gui
 
 ```bash
-tungnaa run --tts models/tts/rtalign_044_jvs.ckpt --vocoder models/vocoder/rave3-jvs-warm200k-lobeta_c052f53b23_streaming.ts --audio-out default
+tungnaa run --audio-out default
 ```
+
+use `tungnaa list-devices` to get audio devices by index
 
 ## Using SuperCollider, PureData or Max as Audio Engine
 
@@ -32,8 +33,8 @@ If `--latent-audio` switch is enabled, Tungnaa will stream RAVE latent trajector
 SuperCollider:
 `sclang supercollider/rtvoice-demo.scd` 
 
-```
-tungnaa run --tts models/tts/rtalign_044_jvs.ckpt --latent_audio
+```bash
+tungnaa run --latent_audio
 ```
 
 # Training Models

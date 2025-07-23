@@ -910,8 +910,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.toolbar_controls.addAction(self._reset_action)
         self.toolbar_controls.addAction(self._latent_bias_reset_action)
         
-
-
         # Tabbed Interface for Generator/Sampler
         self.tabwidget = QtWidgets.QTabWidget(self.main);
 
@@ -919,9 +917,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.generator_widget = QtWidgets.QWidget(self.tabwidget);
 
         # See https://doc.qt.io/qt-6/qtextedit.html for all the fun slots for textedit
-        self.gen_text_input = QtWidgets.QTextEdit(parent=self.generator_widget)
+        self.gen_text_input = QtWidgets.QPlainTextEdit(parent=self.generator_widget)
         self.gen_text_input.setMaximumHeight(100)
-        self.gen_text_input.setFontPointSize(24)
+        self.gen_text_input.setFont(QtGui.QFont("Arial", 24))
         self.gen_text_input.setPlainText(text or "<It took me a while to have a voice. And now that I have one, I am not going to be silent.>")
         self.gen_text_input.setStatusTip("enter text to generate new utterances")
         signaller.set_gen_text.connect(self.gen_text_input.setPlainText)
@@ -949,9 +947,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # Sampler Tab
         self.sampler_widget = QtWidgets.QWidget(self.tabwidget);
 
-        self.samp_text_input = QtWidgets.QTextEdit(self.sampler_widget)
+        self.samp_text_input = QtWidgets.QPlainTextEdit(self.sampler_widget)
         self.samp_text_input.setMaximumHeight(100)
-        self.samp_text_input.setFontPointSize(24)
+        self.samp_text_input.setFont(QtGui.QFont("Arial", 24))
         self.samp_text_input.setPlainText(sampler_text or "took")
         self.samp_text_input.setStatusTip("enter text to search through previous utterances in sampler mode")
         signaller.set_samp_text.connect(self.samp_text_input.setPlainText)

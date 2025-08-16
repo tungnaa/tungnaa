@@ -775,7 +775,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sampler_text=None,
         ):
         super().__init__(parent)
-        self.version= "Alpha v0.1.0" # TODO: There's probably a tidier way to do this using Qt or python package management
+        self.version= f"Alpha v{tungnaa.__version__}"
         self.appname= f"T̴u̮n̵g̴na͠á {self.version}"
 
         self.stress_gui = stress_gui
@@ -821,10 +821,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.tungnaa_logo = QtWidgets.QLabel(parent=self.main)
         with resources.path("tungnaa.resources", "tungnaa_logo.png") as path:
-            logo_pixmap= QtGui.QPixmap(path.as_posix())
+            logo_pixmap = QtGui.QPixmap(path.as_posix())
         self.tungnaa_logo.setPixmap(logo_pixmap)
         self.tungnaa_logo.setMargin(1)
-        self.tungnaa_logo.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
+        self.tungnaa_logo.setAlignment(
+            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
+        # self.tungnaa_logo.setGraphicsEffect(QtWidgets.QGraphicsDropShadowEffect(
+        #     xOffset=0, yOffset=0, blurRadius=20, 
+        #     color=QtGui.QColor(0, 0, 0)))
+
         self.tungnaa_version = QtWidgets.QLabel(parent=self.main)
         self.tungnaa_version.setText(self.version)
         version_font = QtGui.QFont()
@@ -833,8 +838,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tungnaa_version.setMargin(0)
         self.tungnaa_version.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignTop)
 
-
-
+        feedback_url = "https://forms.gle/F97yhJ1YB5aiZPmn7"
+        self.feedback_link = QtWidgets.QLabel(parent=self.main)
+        self.feedback_link.setText(f'<a href="{feedback_url}">feedback...</a>')
+        print(f'we would love your feedback on Tungnaá in this short survey: {feedback_url}')
+        self.feedback_link.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.feedback_link.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.feedback_link.setOpenExternalLinks(True)
+        version_font = QtGui.QFont()
+        version_font.setPointSize(10)
+        self.feedback_link.setFont(version_font)
+        self.feedback_link.setMargin(0)
+        self.feedback_link.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignTop)
+        self.feedback_link.setStatusTip("link to a short survey form")
 
         # Main App Toolbar
         self.toolbar_top = QtWidgets.QToolBar(self.main)
@@ -843,7 +860,10 @@ class MainWindow(QtWidgets.QMainWindow):
         controls_layout = HBoxLayout()
         controls_layout.addWidget(self.toolbar_controls)
         controls_layout.addStretch(1)
-        controls_layout.addLayout(VBoxLayout(self.tungnaa_logo, self.tungnaa_version))
+        # controls_layout.addLayout(VBoxLayout(self.tungnaa_logo, self.tungnaa_version, self.feedback_link))
+        controls_layout.addLayout(HBoxLayout(
+            self.tungnaa_logo, 
+            VBoxLayout(self.feedback_link, self.tungnaa_version)))
         self.toolbar_combined.setLayout(controls_layout)
         self.addToolBar(self.toolbar_top) # Toolbar gets added to VLayout below
 

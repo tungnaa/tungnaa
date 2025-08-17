@@ -418,6 +418,18 @@ class RaveLatents(QtWidgets.QWidget):
             for idx,sliders in enumerate(self.latents):
                 sliders[1].setValue(values[idx])
 
+class ModelInfoDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None, context:'MainWindow'=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Model Info")
+
+        self.model_name = QtWidgets.QLabel()
+        self.model_meta = QtWidgets.QLabel()
+
+        self.setLayout(VBoxLayout(
+            self.model_name,
+            self.model_meta
+        ))
 
 class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent=None, context:'MainWindow'=None) -> None:
@@ -910,6 +922,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings_action = QtGui.QAction("Settings", self)
         self._settings_action.setStatusTip("Adjust OSC, MIDI and Audio settings")
         self._settings_action.triggered.connect(self.open_settings)
+
+        self._model_info_action = QtGui.QAction("Model Info", self)
+        self._model_info_action.setStatusTip("Show model metadata")
+        self._model_info_action.triggered.connect(self.open_model_info)
+        self.model_info_dialog = ModelInfoDialog(context=self)
+
         self.temperature_slider = DoubleSlider(orientation=QtCore.Qt.Horizontal, decimals=3, parent=self)
         self.temperature_slider.setMaximum(2.0)
         self.temperature_slider.setMinimum(0.0)
@@ -923,6 +941,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.toolbar_top.addAction(self._sampler_stop_at_end_toggle_action)
         self.toolbar_top.addAction(self._generate_stop_at_end_toggle_action)
         self.toolbar_top.addAction(self._settings_action)
+        self.toolbar_top.addAction(self._model_info_action)
 
         self.toolbar_controls.addAction(self._generate_action)
         self.toolbar_controls.addAction(self._sampler_action)
@@ -1029,6 +1048,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._generate_stop_at_end_toggle_action.setChecked(False) # make the default to babble like a river
         self._sampler_stop_at_end_toggle_action.setChecked(True)
 
+    def set_metadata(self, name, meta):
+        if name is not None:
+            self.model_info_dialog.model_name.setText(name)
+        if meta is not None:
+            meta_str = ""
+            for k,v in meta.Meta.items():
+                # if k!='vocoder':
+                meta_str += f'{k}: {v}\n'
+            self.model_info_dialog.model_meta.setText(meta_str)
 
     def image_clicked(self, ev):
         # print(ev.pos)
@@ -1267,6 +1295,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings_dialog = SettingsDialog(context=self)
         self.settings_dialog.show() # use show() to display a modeless dialog
 
+    def open_model_info(self):
+        self.model_info_dialog.show() # use show() to display a modeless dialog
+
     def serve_osc(self, address=("localhost", 7777)):
         self.osc_controller.unserve_osc()
         self.osc_controller.serve_osc(address=address)
@@ -1365,11 +1396,12 @@ def main(
 
     # if tts is not a local file, download model from repo
     # also sets the vocoder unless it it explicitly set to something else
+    meta = None
     try:
         with open(tts): pass
     except FileNotFoundError:
         print(f'searching remote repo for model "{tts}"...')
-        tts, vocoder = dl_model(repo, tts, vocoder)
+        tts, vocoder, model_name, model_meta = dl_model(repo, tts, vocoder)
 
     backend = tungnaa.gui.backend.Backend(
         checkpoint=tts, 
@@ -1397,11 +1429,13 @@ def main(
         text=text,
         sampler_text=sampler_text,
         )
-    
+
     available_geometry = win.screen().availableGeometry()
     win.resize(available_geometry.width() / 2 * 1.063, available_geometry.height())
     win.move((available_geometry.width() - win.width()), 0)
     win.show()
+
+    win.set_metadata(model_name, model_meta)
 
     # backend.start_stream()
 

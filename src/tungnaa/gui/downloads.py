@@ -35,7 +35,7 @@ def dl_model(repo, tts, vocoder):
                 voc_hf = f'models/vocoder/{m.Meta["vocoder"]}'
                 vocoder = hf.hf_hub_download(repo_id=repo, filename=voc_hf)
                 print(f'{vocoder=}')
-            return tts, vocoder
+            return tts, vocoder, n, m
 
 def main(repo='Intelligent-Instruments-Lab/tungnaa-models-public'):
     for n,m in get_markdown(repo):

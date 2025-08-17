@@ -1396,7 +1396,7 @@ def main(
 
     # if tts is not a local file, download model from repo
     # also sets the vocoder unless it it explicitly set to something else
-    meta = None
+    model_name, model_meta = None, None
     try:
         with open(tts): pass
     except FileNotFoundError:

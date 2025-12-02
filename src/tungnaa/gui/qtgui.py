@@ -18,7 +18,11 @@ import pythonosc
 import pythonosc.osc_server
 
 import tungnaa.gui
-from tungnaa.gui.downloads import dl_model
+from tungnaa.gui.downloads import dl_model_from_repo, read_remote_models_info, read_local_models_info
+
+# need this to get the list of devices -- could send it from the backend but
+# no need to overcomplicate for now...
+import sounddevice as sd
 
 # multiprocessing: need to use spawn (no fork on mac, no forkserver on windows)
 # note, this may preclude pyinstaller...
@@ -98,6 +102,11 @@ class Proxy:
             raise AttributeError
     
     def _run(self, conn):
+        """
+        this method is run in the child process.
+        first thing sent over the pipe (back to the parent) is True.
+        then loop to handle method calls received over the pipe.
+        """
         print('======================BACKEND RUN======================')
         self.obj.run(conn)
         self.running = True
@@ -110,7 +119,7 @@ class Proxy:
             getattr(self.obj, name)(*a, **kw)
 
 
-# save some boilerplate
+# save some Qt boilerplate
 def Layout(*items, cls=QtWidgets.QHBoxLayout, spacing=None, margins=None):
     l = cls()
     if spacing is not None:
@@ -786,6 +795,7 @@ class MainWindow(QtWidgets.QMainWindow):
         text=None,
         sampler_text=None,
         ):
+        print("MainWindow.__init__")
         super().__init__(parent)
         self.version= f"Alpha v{tungnaa.__version__}"
         self.appname= f"T̴u̮n̵g̴na͠á {self.version}"
@@ -819,7 +829,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # BUILD GUI
         # ---------------------------------------------------------------------
         #self.setWindowTitle(QtCore.QCoreApplication.applicationName())
-        
+   
         self.setWindowTitle(self.appname)
         self.main = QtWidgets.QWidget(self)
         # self.main.setStyleSheet("color: grey; background-color: black")
@@ -878,6 +888,26 @@ class MainWindow(QtWidgets.QMainWindow):
             VBoxLayout(self.feedback_link, self.tungnaa_version)))
         self.toolbar_combined.setLayout(controls_layout)
         self.addToolBar(self.toolbar_top) # Toolbar gets added to VLayout below
+
+        self.model_selector = QtWidgets.QComboBox()
+        self.model_selector.currentTextChanged.connect(self.model_changed)
+        self.model_selector_area = HBoxLayout(
+            QtWidgets.QLabel("model:"),
+            self.model_selector,
+            )
+        self.vocoder_selector = QtWidgets.QComboBox()
+        self.vocoder_selector.currentTextChanged.connect(self.vocoder_changed)
+        self.vocoder_selector_area = HBoxLayout(
+            QtWidgets.QLabel("vocoder:"),
+            self.vocoder_selector,
+            )
+        self.audio_device_selector = QtWidgets.QComboBox()
+        self.audio_device_selector.currentTextChanged.connect(
+            self.audio_device_changed)
+        self.audio_device_selector_area = HBoxLayout(
+            QtWidgets.QLabel("audio device:"),
+            self.audio_device_selector,
+            )
 
         self._generate_action = QtGui.QAction("Generate", self)
         self._generate_action.setStatusTip("Start autoregression")
@@ -1010,8 +1040,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabwidget.addTab(self.generator_widget, "Generator")
         self.tabwidget.addTab(self.sampler_widget, "Sampler")        
 
-
-
         # StatusBar
         self.statusbar = QtWidgets.QStatusBar(self.main)
         self.setStatusBar(self.statusbar)
@@ -1019,8 +1047,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.latents = RaveLatents(self.main)
         self.setToolButtonStyle(QtCore.Qt.ToolButtonFollowStyle)
 
+        selectors = HBoxLayout(self.model_selector_area, self.vocoder_selector_area, self.audio_device_selector_area)
 
         self._main_layout = VBoxLayout(
+            selectors,
             self.toolbar_combined,
             self.tabwidget,
             self.latents,
@@ -1047,6 +1077,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._generate_stop_at_end_toggle_action.setChecked(False) # make the default to babble like a river
         self._sampler_stop_at_end_toggle_action.setChecked(True)
+
+    def model_changed(self):
+        print(self.model_selector.currentData())
+        # TODO
+
+    def vocoder_changed(self):
+        print(self.vocoder_selector.currentData())
+        # TODO
+
+    def audio_device_changed(self):
+        device = self.audio_device_selector.currentData()
+        print(f'setting audio {device=}')
+        if self.backend and self.use_backend:
+            self.backend.set_audio_device(audio_out=device['index'])
 
     def set_metadata(self, name, meta):
         if name is not None:
@@ -1311,6 +1355,7 @@ def main(
     tts:Path='tungnaa_119_vctk',
     vocoder:Path=None,
     repo='Intelligent-Instruments-Lab/tungnaa-models-public',
+    model_dir=None,
     # output modes
     synth_audio:bool=True,
     latent_audio:bool=False,
@@ -1394,41 +1439,68 @@ def main(
     else:
         sender = None
 
+    # get remote model sources
+    repos = repo.split(',') if repo is not None else []
+    remote_models_info = list(read_remote_models_info(repos))
+    print(f'{remote_models_info=}')
+
+    # get local model sources
+    model_dirs = model_dir.split(',') if model_dir is not None else []
+    local_models_info = list(read_local_models_info(model_dirs))
+    print(f'{local_models_info=}')
+
+    ### DEBUG
+    # if tts is None and len(local_models_info):
+    #     d,name,meta = local_models_info[0]
+    #     tts = (d/'tts'/name).with_suffix('.ckpt')
+    #     print(f'{tts=}')
+    #     print(meta.)
+    #     print(meta.Meta)
+    #     vocoder = d/'vocoder'/meta.Meta["vocoder"]
+
+    # exit(0) ### DEBUG
+
     # if tts is not a local file, download model from repo
     # also sets the vocoder unless it it explicitly set to something else
     model_name, model_meta = None, None
     try:
         with open(tts): pass
     except FileNotFoundError:
-        print(f'searching remote repo for model "{tts}"...')
-        tts, vocoder, model_name, model_meta = dl_model(repo, tts, vocoder)
+        if len(remote_models_info):
+            print(f'searching remote repo for model "{tts}"...')
+            tts, vocoder, model_name, model_meta = dl_model_from_repo(repos, tts, vocoder)
 
-    backend = tungnaa.gui.backend.Backend(
-        checkpoint=tts, 
-        rave_path=vocoder,
-        audio_out=audio_out,
-        audio_block=audio_block,
-        # audio_channels=audio_channels,
-        synth_audio=synth_audio,
-        latent_audio=latent_audio,
-        latent_osc=latent_osc,
-        osc_sender=sender,
-        buffer_frames=buffer_frames,
-        jit=jit,
-        profile=profile,
-        )
+    if no_backend:
+        backend = None
+    else:
+        backend = Proxy(tungnaa.gui.backend.Backend(
+            checkpoint=tts, 
+            rave_path=vocoder,
+            audio_out=audio_out,
+            audio_block=audio_block,
+            # audio_channels=audio_channels,
+            synth_audio=synth_audio,
+            latent_audio=latent_audio,
+            latent_osc=latent_osc,
+            osc_sender=sender,
+            buffer_frames=buffer_frames,
+            jit=jit,
+            profile=profile,
+            ))
     
     osc_host, osc_port = osc_in_addr.split(':')
     osc_port = int(osc_port)
+    print("creating main window...")
     win = MainWindow(
         use_backend=(not no_backend), 
         sender=sender,
-        backend=Proxy(backend),
+        backend=backend,
         osc_listen_addr=(osc_host, osc_port),
         stress_gui=stress_gui,
         text=text,
         sampler_text=sampler_text,
         )
+    
 
     available_geometry = win.screen().availableGeometry()
     win.resize(available_geometry.width() / 2 * 1.063, available_geometry.height())
@@ -1437,7 +1509,23 @@ def main(
 
     win.set_metadata(model_name, model_meta)
 
-    # backend.start_stream()
+    print("GUI ready")
+
+    ### DEBUG
+    # backend.set_audio_device(
+        # audio_out=0, audio_block=audio_block, 
+        # audio_channels=None, buffer_frames=buffer_frames+1)
+    for item in local_models_info:
+        _,n,_ = item
+        win.model_selector.addItem(n, item)
+    device_list = sd.query_devices()
+    assert isinstance(device_list, sd.DeviceList)
+    for item in device_list:
+        if item.get('max_output_channels', 0):
+            # name = item.get('name', item.get('index'))
+            name = f"{item['index']}: '{item['name']}' (I/O {item['max_input_channels']}/{item['max_output_channels']}) (SR: {int(item['default_samplerate'])})"
+            win.audio_device_selector.addItem(name, item)
+        # print(item)
 
     sys.exit(app.exec())
 

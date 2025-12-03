@@ -5,6 +5,7 @@ import random
 import queue
 import functools as ft
 import threading
+from typing import List, Dict, Tuple, Any
 import numpy as np
 import numpy.typing as npt
 import typing
@@ -19,7 +20,7 @@ import pythonosc
 import pythonosc.osc_server
 
 import tungnaa.gui
-from tungnaa.gui.downloads import dl_model_from_repo, read_remote_models_info, read_local_models_info
+from tungnaa.gui.downloads import get_remote_model_info, get_local_model_info
 
 # need this to get the list of devices -- could send it from the backend but
 # no need to overcomplicate for now...
@@ -122,7 +123,7 @@ class Proxy:
 
 
 # save some Qt boilerplate
-def Layout(*items, cls=QtWidgets.QHBoxLayout, spacing=None, margins=None, stretch=None):
+def Layout(*items, cls:type=QtWidgets.QHBoxLayout, spacing=None, margins=None, stretch=None):
     l = cls()
     if spacing is not None:
         l.setSpacing(spacing)
@@ -266,7 +267,7 @@ class AlignmentGraph(QtWidgets.QWidget):
         else:
             print(f"Error: token index {tok} out of range (0-{self.num_encodings-1})")
 
-    def get_slidervalue_as_params(self) -> np.ndarray:
+    def get_slidervalue_as_params(self) -> Tuple[float, float]:
         """slider value to attention parameters"""
         tok = self.alignment_slider.value() / self.attn_slider_resolution 
 
@@ -418,7 +419,7 @@ class RaveLatents(QtWidgets.QWidget):
         for bias,_ in self.latents:
             bias.setValue(value);
 
-    def set_latents(self, values:list|npt.ArrayLike):
+    def set_latents(self, values):
         """
         Set latent values in the gui. 
         values > the number of sliders are ignored
@@ -961,7 +962,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._model_info_action.triggered.connect(self.open_model_info)
         self.model_info_dialog = ModelInfoDialog(context=self)
 
-        self.temperature_slider = DoubleSlider(orientation=QtCore.Qt.Horizontal, decimals=3, parent=self)
+        self.temperature_slider = DoubleSlider(
+            orientation=QtCore.Qt.Horizontal, decimals=3, parent=self)
         self.temperature_slider.setMaximum(2.0)
         self.temperature_slider.setMinimum(0.0)
         self.temperature_slider.setValue(1)
@@ -1082,24 +1084,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sampler_stop_at_end_toggle_action.setChecked(True)
 
     def model_changed(self):
-        d,path,md = (self.model_selector.currentData())
+        """handler for model selection"""
+        model_info = self.model_selector.currentData()
+        # d,path,vocoder_path,md = (self.model_selector.currentData())
         if self.backend is not None and self.use_backend:
-            self.backend.set_tts_model(path)
-        if md.Meta is not None:
-            vocoder_name = md.Meta.get('vocoder')
-            if vocoder_name is not None:
-                print(d/'vocoder'/vocoder_name)
-            else:
-                print("no vocoder in metadata")
-        else:
-            print("no metadata in markdown")
-        print("model_changed return")
+            self.backend.set_tts_model(model_info.get_tts_path())
+            vocoder_info = model_info.get_vocoder_info()
+            # TODO add control to link/unlink vocoder
+            if vocoder_info is not None:
+                # TODO this could be a problem if there are identical names
+                self.vocoder_selector.setCurrentText(vocoder_info.name)
+        self.set_metadata(model_info.name, model_info.get_markdown())
 
     def vocoder_changed(self):
-        print(self.vocoder_selector.currentData())
-        # TODO
+        """handler for vocoder selection"""
+        voc_info = self.vocoder_selector.currentData()
+        if self.backend is not None and self.use_backend:
+            self.backend.set_vocoder(voc_info.get_path())
 
     def audio_device_changed(self):
+        """handler for audio device selection"""
         device = self.audio_device_selector.currentData()
         print(f'setting audio {device=}')
         if self.backend and self.use_backend:
@@ -1241,7 +1245,6 @@ class MainWindow(QtWidgets.QMainWindow):
             txtval = self.gen_text_input.toPlainText()
             print(f"Encoding: {txtval}")
             self.text_encoding_status.setText("ʭʬʭʬʭʬʭʬʭʬʭʬʭʬʭʬʭ encoding.... ʬʭʬʭʬʭʬʭʬʭʬʭʬʭʬʭʬʭ")
-            # this returns the text with start/end tokens added and loop points stripped
             if self.backend is not None and self.use_backend:
                 self.backend.set_text(text=txtval)
         else:
@@ -1467,12 +1470,12 @@ def main(
 
     # get remote model sources
     repos = repo.split(',') if repo is not None else []
-    remote_models_info = list(read_remote_models_info(repos))
-    # print(f'{remote_models_info=}')
+    remote_models_info = list(get_remote_model_info(repos))
+    print(f'{remote_models_info=}')
 
     # get local model sources
     model_dirs = model_dir.split(',') if model_dir is not None else []
-    local_models_info = list(read_local_models_info(model_dirs))
+    local_models_info = list(get_local_model_info(model_dirs))
     # print(f'{local_models_info=}')
 
     ### DEBUG
@@ -1539,9 +1542,14 @@ def main(
     print("GUI ready")
 
     ### TODO move into constructor
+    for item in remote_models_info:
+        win.model_selector.addItem(item.name, item)
+        voc_info = item.get_vocoder_info()
+        if voc_info is not None:
+            win.vocoder_selector.addItem(voc_info.name, voc_info)
     for item in local_models_info:
-        _,n,_ = item
-        win.model_selector.addItem(n.stem, item)
+        win.model_selector.addItem(item.name, item)
+
     device_list = sd.query_devices()
     assert isinstance(device_list, sd.DeviceList)
     for item in device_list:

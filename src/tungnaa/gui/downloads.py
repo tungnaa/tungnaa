@@ -2,14 +2,85 @@ import markdown as md
 import huggingface_hub as hf
 from pathlib import Path
 
-def get_local_metadata_files(dirs):
+class LocalVocoderInfo():
+    def __init__(self, name, path):
+        self.name = name
+        self.path = path
+    def get_path(self):
+        return self.path
+    
+class RemoteVocoderInfo():
+    def __init__(self, name, repo, path):
+        self.name = name
+        self.repo = repo
+        self.path = path
+    def get_path(self):
+        return hf.hf_hub_download(repo_id=self.repo, filename=self.path)
+
+class LocalModelInfo():
+    def __init__(self, md_path):
+        """"""
+        md_path = Path(md_path)
+        self.name = md_path.stem
+        self._md_path = md_path
+        self._md = None
+
+    def get_markdown(self):
+        if self._md is None:
+            self._md = read_markdown(self._md_path)
+        return self._md
+    
+    def get_tts_path(self):
+        return self._md_path.with_suffix('.ckpt')
+    
+    def get_vocoder_info(self):
+        meta = self.get_markdown().Meta
+        name = meta.get("vocoder")
+        if name is None: return None
+        LocalVocoderInfo(name, self._md_path.parent.parent/'vocoder'/name)
+
+class HFModelInfo():
+    def __init__(self, repo, md_path):
+        """"""
+        self.repo = repo
+        self._md_path = md_path # remote markdown path
+        self.name = Path(md_path).stem # assuming filename is good display name
+
+        self._md = None
+
+    def get_markdown(self):
+        """download markdown, parse and return it"""
+        if self._md is None:
+            print(f"getting {self._md_path} from HF repo {self.repo}")
+            path = hf.hf_hub_download(repo_id=self.repo, filename=self._md_path)
+            self._md = read_markdown(path)
+        return self._md
+
+    def get_tts_path(self):
+        """download, cache and return the local path to TTS model"""
+        name = Path(self._md_path).stem
+        tts_hf = f'models/tts/{name}.ckpt'
+        return hf.hf_hub_download(repo_id=self.repo, filename=tts_hf)
+
+    def get_vocoder_info(self):
+        """download, cache and return the local path to vocoder if possible"""
+        meta = self.get_markdown().Meta
+        if meta is None: return None
+        name = meta.get("vocoder")
+        if name is None: return None
+        voc_hf = f'models/vocoder/{name}'
+        return RemoteVocoderInfo(
+            name, self.repo, voc_hf)
+
+
+def get_local_model_info(dirs):
     for d in dirs:
         d = Path(d)
         files = d.glob('tts/*.md')
         for f in files:
-            yield d, f
+            yield LocalModelInfo(f)
 
-def get_remote_metadata_files(repos):
+def get_remote_model_info(repos):
     if not len(repos):
         print('no repos specified')
         return
@@ -23,7 +94,7 @@ def get_remote_metadata_files(repos):
             if file.startswith('/'):
                 file = file[1:]
             # print(file)
-            yield repo, hf.hf_hub_download(repo_id=repo, filename=file)    
+            yield HFModelInfo(repo, file)   
 
 def read_markdown(f):
     with open(f, 'r') as file:
@@ -32,35 +103,42 @@ def read_markdown(f):
     m.convert(text)
     return m
 
-def read_remote_models_info(repos):
-    "generate triples of repository, model name, model card markdown"
-    for repo, f in get_remote_metadata_files(repos):
-        k = Path(f).stem
-        yield (repo, k, read_markdown(f))
+# def read_remote_models_info(repos):
+#     "generate triples of repository, model name, model card markdown"
+#     for repo, f in get_remote_metadata_files(repos):
+#         k = Path(f).stem
+#         yield (repo, k, read_markdown(f))
 
-def read_local_models_info(model_dirs):
-    "generate triples of models dir, model path, model card markdown"
-    for d, path in get_local_metadata_files(model_dirs):
-        yield (d, path.with_suffix('.ckpt'), read_markdown(path))
+# def read_local_models_info(model_dirs):
+#     "generate triples of models dir, model path, model card markdown"
+#     for d, path in get_local_metadata_files(model_dirs):
+#         md = read_markdown(path)
+#         if md is not None and md.Meta is not None:
+#             vocoder_path = md.Meta.get('vocoder')
+#         yield (d, path.with_suffix('.ckpt'), vocoder_path, md)
 
-def dl_model_from_available(available_models, tts, vocoder):
-    for repo,name,markdown in available_models:
-        if name==tts:
-            tts_hf = f'models/tts/{tts}.ckpt'
-            tts = hf.hf_hub_download(repo_id=repo, filename=tts_hf)
-            print(f'{tts=}')
-            if vocoder is None:
-                voc_hf = f'models/vocoder/{markdown.Meta["vocoder"]}'
-                vocoder = hf.hf_hub_download(repo_id=repo, filename=voc_hf)
-                print(f'{vocoder=}')
-            return tts, vocoder, name, markdown
-    raise FileNotFoundError
+# def dl_model_from_available(available_models, tts, vocoder):
+#     for repo,name,markdown in available_models:
+#         if name==tts:
+#             tts_hf = f'models/tts/{tts}.ckpt'
+#             tts = hf.hf_hub_download(repo_id=repo, filename=tts_hf)
+#             print(f'{tts=}')
+#             if vocoder is None:
+#                 voc_hf = f'models/vocoder/{markdown.Meta["vocoder"]}'
+#                 vocoder = hf.hf_hub_download(repo_id=repo, filename=voc_hf)
+#                 print(f'{vocoder=}')
+#             return tts, vocoder, name, markdown
+#     raise FileNotFoundError
         
-def dl_model_from_repo(repos, tts, vocoder):
-    return dl_model_from_available(read_remote_models_info(repos), tts, vocoder)
+# def dl_model_from_repo(repos, tts, vocoder):
+#     return dl_model_from_available(read_remote_models_info(repos), tts, vocoder)
 
 def main(repo='Intelligent-Instruments-Lab/tungnaa-models-public'):
-    for _,n,m in dl_available_models_info(repo):
-        print(n)
-        for k,v in m.Meta.items():
-            print(f'\t{k}: {v}')
+    for item in get_remote_model_info(repo):
+        print(item.name)
+        print(f'\tTTS: {item.get_tts_path()}')
+        print(f'\tvocoder: {item.get_vocoder_path()}')
+    # for _,n,m in dl_available_models_info(repo):
+    #     print(n)
+    #     for k,v in m.Meta.items():
+    #         print(f'\t{k}: {v}')

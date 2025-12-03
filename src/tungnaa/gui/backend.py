@@ -181,14 +181,15 @@ class Backend:
         self.stream = None
 
         self.checkpoint = checkpoint
-        self.rave_path = rave_path
-        self.rave_sr = None
+        self.vocoder_path = rave_path
+        self.vocoder_sr = None
         self.model = None
         self.text_model = None
         self.vocoder = None
 
         self.step_thread = None
-        self.text = ''
+        self.raw_text = ''
+        self.text = None
 
         # self.stepping = False # for stopping the step thread while changing model
         # call this from both __init__ and run
@@ -226,7 +227,10 @@ class Backend:
         self.latent_feedback = False
 
         self.lock = RLock()
+
         self.text_update_thread = None    
+        self.tts_model_update_thread = None    
+        self.vocoder_update_thread = None    
 
         self.states = []
 
@@ -240,8 +244,8 @@ class Backend:
 
         ### synthesis in python:
         # load RAVE model
-        self.load_vocoder_model(rave_path=self.rave_path)
-        # self.set_vocoder(self.rave_path)
+        self.set_vocoder(self.vocoder_path)
+        # self.set_vocoder(self.vocoder_path)
         self.step_thread = Thread(target=self.step_loop, daemon=True)
         self.step_thread.start()
         # self.launch_step_thread()
@@ -277,9 +281,6 @@ class Backend:
         # if buffer_frames is None: buffer_frames = self.buffer_frames
 
         # print(f'{audio_out=} {audio_block=} {audio_channels=} {buffer_frames=}')
-        # self.audio_q = Queue(buffer_frames)     
-        # self.trigger_q = Queue(buffer_frames) 
-        # self.buffer_frames = buffer_frames
         
         if self.out_mode:
 
@@ -322,18 +323,18 @@ class Backend:
             self.frame_counter:int = 0
 
             sd.default.device = audio_out
-            if self.rave_sr:
-                if audio_device and audio_device['default_samplerate'] != self.rave_sr:
+            if self.vocoder_sr:
+                if audio_device and audio_device['default_samplerate'] != self.vocoder_sr:
                     # this should not be an error. On OSX/CoreAudio you can set the device sample rate to the model sample rate.
                     # however on Linux/JACK this throws a fatal error and stops program execution, requiring you to restart Jack to change the sampling rate
 
                     # TODO: also check RAVE block size vs. audio device block size if possible
                     print("\n------------------------------------");
-                    print(f"WARNING: Device default sample rate ({audio_device['default_samplerate']}) and RAVE model sample rate ({self.rave_sr}) mismatch! You may need to change device sample rate manually on some platforms.")
+                    print(f"WARNING: Device default sample rate ({audio_device['default_samplerate']}) and RAVE model sample rate ({self.vocoder_sr}) mismatch! You may need to change device sample rate manually on some platforms.")
                     print("------------------------------------\n");
 
-                sd.default.samplerate = self.rave_sr # could cause an error if device uses a different sr from model
-                print(f"RAVE SAMPLING RATE: {self.rave_sr}")
+                sd.default.samplerate = self.vocoder_sr # could cause an error if device uses a different sr from model
+                print(f"RAVE SAMPLING RATE: {self.vocoder_sr}")
                 if audio_device is not None:
                     print(f"DEVICE SAMPLING RATE: {audio_device['default_samplerate']}")
 
@@ -354,7 +355,7 @@ class Backend:
             print("creating new stream")
             self.stream = stream_cls(
                 callback=self.audio_callback,
-                samplerate=self.rave_sr, 
+                samplerate=self.vocoder_sr, 
                 blocksize=audio_block, 
                 #device=(audio_in, audio_out)
                 device=audio_out,
@@ -365,9 +366,9 @@ class Backend:
                 print('starting new stream')
                 self.stream.start()
             
-            if self.rave_sr:
-                assert self.stream.samplerate == self.rave_sr, f"""
-                failed to set sample rate to {self.rave_sr} from sounddevice
+            if self.vocoder_sr:
+                assert self.stream.samplerate == self.vocoder_sr, f"""
+                failed to set sample rate to {self.vocoder_sr} from sounddevice
                 """
 
             self.audio_out = audio_out
@@ -384,7 +385,6 @@ class Backend:
     def _update_tts_model(self, checkpoint):
         """helper for loading TTS model"""
         print('loading new model')
-        # self.kill_step_thread()
         model = TacotronDecoder.from_checkpoint(checkpoint)
 
         # not scripting text encoder for now
@@ -432,50 +432,57 @@ class Backend:
         self.launch_text_update()
 
         return {}
+    
+    def set_vocoder(self, checkpoint):
+        self.vocoder_update_thread = Thread(
+            target=self._update_vocoder, 
+            args=(checkpoint,), daemon=True)
+        self.vocoder_update_thread.start()
 
-    def load_vocoder_model(self, rave_path):
-        """helper for loading RAVE vocoder model, called on initialization but can also be called from GUI"""
+    def _update_vocoder(self, rave_path):
+        """helper for loading RAVE vocoder model"""
         # self.kill_step_thread()
         # TODO: The audio engine sampling rate gets set depending on the sampling rate from the vocoder. 
         #   When loading a new vocoder model we need to add some logic to make sure the new vocoder has the same sample rate as the audio system.
         if OutMode.SYNTH_AUDIO in self.out_mode:
             assert rave_path is not None
-            self.rave = torch.jit.load(rave_path, map_location='cpu')
-            self.rave_path = rave_path
-            self.rave.eval()
-            self.block_size = int(self.rave.decode_params[1])
+            vocoder = torch.jit.load(rave_path, map_location='cpu')
+            vocoder.eval()
+            self.block_size = int(vocoder.decode_params[1])
             try:
-                self.rave_sr = int(self.rave.sampling_rate)
+                vocoder_sr = int(vocoder.sampling_rate)
             except Exception:
-                self.rave_sr = int(self.rave.sr)
+                vocoder_sr = int(vocoder.sr)
             with torch.inference_mode():
                 # warmup
-                if hasattr(self.rave, 'full_latent_size'):
-                    latent_size = self.rave.latent_size + int(
-                        hasattr(self.rave, 'pitch_encoder'))
+                if hasattr(vocoder, 'full_latent_size'):
+                    latent_size = vocoder.latent_size + int(
+                        hasattr(vocoder, 'pitch_encoder'))
                 else:
-                    latent_size = self.rave.cropped_latent_size
-                self.rave.decode(torch.zeros(1,latent_size,1))
+                    latent_size = vocoder.cropped_latent_size
+                vocoder.decode(torch.zeros(1,latent_size,1))
         else:
-            self.rave = None
-            self.rave_sr = None
+            vocoder = None
+            vocoder_sr = None
+        self.replace_vocoder = (vocoder, vocoder_sr, latent_size)
+        self.needs_vocoder_replace = True
         # self.launch_step_thread()
 
-        if self.stream is not None and self.rave_sr != self.stream.samplerate:
+    def do_vocoder_replace(self):
+        self.vocoder, self.vocoder_sr, latent_size = self.replace_vocoder
+        if self.stream is not None and self.vocoder_sr != self.stream.samplerate:
             self.set_audio_device()
+        self.needs_vocoder_replace = False
+        return {'vocoder_num_latents': latent_size}
     
     @property
     def num_latents(self):
+        """latent dim (of TTS model)"""
+        if self.model is None: return None
         return self.model.frame_channels
     
     def start_stream(self):
         """helper for start/sampler"""
-        # if self.out_mode in (OutMode.LATENT_AUDIO, OutMode.LATENT_OSC):
-        #     if not self.loop_thread.is_alive():
-        #         self.run_thread = True
-        #         self.loop_thread.start()
-        # if self.out_mode in (OutMode.LATENT_AUDIO, OutMode.SYNTH_AUDIO):
-        # if self.out_mode is not None:
         if self.stream is None:
             print("warning: no audio stream")
             return
@@ -486,8 +493,6 @@ class Backend:
         """
         start autoregressive alignment & latent frame generation
         """
-        # if self.step_mode != StepMode.GENERATION:
-            # self.needs_reset = True
         self.step_mode = StepMode.GENERATION
         self.start_stream()
 
@@ -537,14 +542,14 @@ class Backend:
             and self.text_update_thread.is_alive()
         ):
             print('warning: text update still pending')
-        self.text = text
+        self.raw_text = text
         self.launch_text_update()
 
     def launch_text_update(self):
         # text processing runs in its own thread
         self.text_update_thread = Thread(
             target=self._update_text, 
-            args=(self.text,), daemon=True)
+            args=(self.raw_text,), daemon=True)
         self.text_update_thread.start()
     
     def _update_text(self, text):
@@ -564,7 +569,7 @@ class Backend:
             time.sleep(1e-2)
 
          # TODO: more general text preprocessing
-        text, start, end = self.extract_loop_points(self.text)
+        text, start, end = self.extract_loop_points(text)
         if self.text_model is None:
             print("warning: no text encoder loaded")
             return ''
@@ -622,6 +627,47 @@ class Backend:
             end = max(0, end - 1)
         # print(text, end)
         return text, start, end
+    
+    def do_reset(self):
+        """perform reset of model states/text (called from `step`)"""
+        print('RESET')
+        # set arbitrary attributes required to perform a reset
+        for k,v in self.reset_values.items():
+            setattr(self, k, v)
+        
+        if self.text_rep is not None:
+            self.model.reset(self.text_rep)
+            if self.align_params is None:
+                # go to loop start after reset
+                self.momentary_align_params = (self.gen_loop_start, 1)
+            elif not self.utterance_empty():
+                # unless painting alignments -- then try to stay
+                # in approximately the same spot
+                # TODO this doesn't work because the frontend just sets it again based on the slider -- need to add bidirectional control
+                self.align_params = (
+                    self.text_index_map(round(self.align_params[0])), 1)
+                
+            # remove old RNN states
+            if len(self.states):
+                for state in self.states[-1]:
+                    self.strip_states(state)
+
+            # start a new utterance
+            self.states.append(Utterance(self.text))
+            ## for now, only sampler of current utterance is supported
+            self.sampler_step = 0
+            # in the future, it might be useful to encode texts without yet starting a new utterance. for now, it makes more sense if hitting encode 
+            # always starts generation
+            self.generate()
+
+            self.needs_reset = False
+
+        return {
+            'reset': True, 
+            'text': self.text, 
+            'num_latents': self.num_latents, 
+            'use_pitch': self.use_pitch
+            }
 
     def set_biases(self, biases:List[float]):
         self.latent_biases = biases
@@ -963,48 +1009,6 @@ class Backend:
             'enter_char':c_enter,
             'leave_char':c_leave
         }
-    
-    def do_reset(self):
-        """perform reset of model states/text (called from `step`)"""
-        print('RESET')
-        # set arbitrary attributes required to perform a reset
-        for k,v in self.reset_values.items():
-            setattr(self, k, v)
-        
-        if self.text_rep is not None:
-            self.model.reset(self.text_rep)
-            if self.align_params is None:
-                # go to loop start after reset
-                self.momentary_align_params = (self.gen_loop_start, 1)
-            elif not self.utterance_empty():
-                # unless painting alignments -- then try to stay
-                # in approximately the same spot
-                # TODO this doesn't work because the frontend just sets it again based on the slider -- need to add bidirectional control
-                self.align_params = (
-                    self.text_index_map(round(self.align_params[0])), 1)
-                
-            # remove old RNN states
-            if len(self.states):
-                for state in self.states[-1]:
-                    self.strip_states(state)
-
-            # start a new utterance
-            self.states.append(Utterance(self.text))
-            ## for now, only sampler of current utterance is supported
-            self.sampler_step = 0
-            # in the future, it might be useful to encode texts without yet starting a new utterance. for now, it makes more sense if hitting encode 
-            # always starts generation
-            self.generate()
-
-            self.needs_reset = False
-
-
-        return {
-            'reset': True, 
-            'text': self.text, 
-            'num_latents': self.num_latents, 
-            'use_pitch': self.use_pitch
-            }
 
     def paint_alignment(self):
         """helper for `step_gen`"""
@@ -1059,6 +1063,10 @@ class Backend:
         if self.needs_model_replace:
             state |= self.do_model_replace()
 
+        # swap out vocoders and possibly change samplerate
+        if self.needs_vocoder_replace:
+            state |= self.do_vocoder_replace()
+
         # reset text and model states
         if self.needs_reset:
             state |= self.do_reset()
@@ -1067,7 +1075,6 @@ class Backend:
 
         if self.text_rep is None or self.step_mode==StepMode.PAUSE:
             if len(state):
-                # self.frontend_q.put(state)
                 self.send_state(state)
             return None
         if self.step_mode==StepMode.GENERATION:
@@ -1090,10 +1097,8 @@ class Backend:
                     state['latent_t'][:,:l] += bias[:,:l]
                 else:
                     print("no latent_t in state")
-                
 
         # send to frontend
-        # self.frontend_q.put(state)
         if self.frontend_conn is not None:
             self.send_state(state)
         else:
@@ -1112,15 +1117,15 @@ class Backend:
                 self.model.block_size) # channel, time
             
             if OutMode.SYNTH_AUDIO in self.out_mode:
-                assert self.rave is not None, "error: vocoder not loaded"
+                assert self.vocoder is not None, "error: vocoder not loaded"
                 # allow creative use of vocoders with mismatched sizes
-                rave_dim = self.rave.decode_params[0]
+                rave_dim = self.vocoder.decode_params[0]
                 common_dim = min(rave_dim, latent.shape[-1])
                 latent_to_rave = torch.zeros(latent.shape[0], rave_dim)
                 latent_to_rave[:,:common_dim] = latent[:,:common_dim]
                 ### run the vocoder
                 with self.profile('vocoder'):
-                    audio = self.rave.decode(
+                    audio = self.vocoder.decode(
                         latent_to_rave[...,None])[0] # channel, time
                 ###
                 audio_frame[:c_synth, :] = audio
@@ -1202,7 +1207,7 @@ class Backend:
 
         if self.model.memory is None:
             print('skipping: model not initialized')
-            if self.rave is not None:
+            if self.vocoder is not None:
                 self.audio_q.put(None)
             return None
 

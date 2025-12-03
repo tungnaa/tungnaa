@@ -1,3 +1,12 @@
+"""
+Backend runs in a Proxy: main thread loops, handling commands from the frontend.
+an audio thread is driven by sounddevice callback, requests blocks of audio 
+    this gets replaced when changing audio device
+a step_thread loops, checking for requested audio blocks and generating them
+    this gets replaced when changing models
+short-lived threads are also created to async load new models and encode text
+"""
+
 from typing import Optional, Callable, Union, Tuple, List, Dict, Any
 from numbers import Number
 from enum import Enum, Flag
@@ -173,16 +182,24 @@ class Backend:
 
         self.checkpoint = checkpoint
         self.rave_path = rave_path
+        self.rave_sr = None
+        self.model = None
+        self.text_model = None
+        self.vocoder = None
 
+        self.step_thread = None
+        self.text = ''
+
+        # self.stepping = False # for stopping the step thread while changing model
         # call this from both __init__ and run
         # torch.multiprocessing.set_sharing_strategy('file_system')
 
 
     def run(self, conn):
         """
-        run method expected by Proxy class
+        run method expected by Proxy class.
 
-        loads the torchscript models and creates the audio stream
+        initialize things which won't be sent over the Pipe from the parent copy
         """
         # call this from both __init__ and run
         # torch.multiprocessing.set_sharing_strategy('file_system')
@@ -192,12 +209,6 @@ class Backend:
 
         # TODO make this a method + stored schema instead of lambda
         self.text_index_map = lambda x:x
-
-        self.load_tts_model(checkpoint=self.checkpoint)
-
-        ### synthesis in python:
-        # load RAVE model
-        self.load_vocoder_model(rave_path=self.rave_path)
 
         # self.set_audio_device(
         #     audio_out=self.audio_out,
@@ -220,12 +231,20 @@ class Backend:
         self.states = []
 
         self.needs_reset = False
+        self.needs_model_replace = False
 
         self.audio_q = Queue(self.buffer_frames)     
         self.trigger_q = Queue(self.buffer_frames) 
 
+        # self.load_tts_model(checkpoint=self.checkpoint)
+
+        ### synthesis in python:
+        # load RAVE model
+        self.load_vocoder_model(rave_path=self.rave_path)
+        # self.set_vocoder(self.rave_path)
         self.step_thread = Thread(target=self.step_loop, daemon=True)
         self.step_thread.start()
+        # self.launch_step_thread()
  
     def step_loop(self):
         """model stepping thread
@@ -233,6 +252,7 @@ class Backend:
         for each timestamp received in trigger_q
         send audio frames in audio_q
         """
+        # while self.stepping:
         while True:
             t = self.trigger_q.get()
             with self.profile('step'):
@@ -355,17 +375,24 @@ class Backend:
         else:
             self.stream = None
     
-    def load_tts_model(self, checkpoint):
-        """helper for loading TTS model, called on initialization but can also be called from GUI"""
-        self.model = TacotronDecoder.from_checkpoint(checkpoint)
-        self.checkpoint = checkpoint
+    def set_tts_model(self, checkpoint):
+        self.tts_model_update_thread = Thread(
+            target=self._update_tts_model, 
+            args=(checkpoint,), daemon=True)
+        self.tts_model_update_thread.start()
+
+    def _update_tts_model(self, checkpoint):
+        """helper for loading TTS model"""
+        print('loading new model')
+        # self.kill_step_thread()
+        model = TacotronDecoder.from_checkpoint(checkpoint)
 
         # not scripting text encoder for now
         # if self.model.text_encoder is None:
             # self.text_model = TextEncoder()
         # else:
-        self.text_model = self.model.text_encoder
-        self.model.text_encoder = None
+        text_model = model.text_encoder
+        model.text_encoder = None
 
         # def _debug(m):
         #     # print({(k,type(v)) for k,v in m.__dict__.items()})
@@ -380,21 +407,35 @@ class Backend:
         # _debug(self.model)
 
         if self.jit:
-            for m in self.model.modules():
+            for m in model.modules():
                 if hasattr(m, 'parametrizations'):
                     torch.nn.utils.parametrize.remove_parametrizations(
                         m,'weight')
-            self.model = torch.jit.script(self.model)
-        self.model.eval()
-        # self.model.train()
+            model = torch.jit.script(model)
+        model.eval()
+
+        self.replace_models = (model, text_model)
+        self.needs_model_replace = True
+
+
+    def do_model_replace(self):
+        print('replacing model')
+        self.model, self.text_model = self.replace_models
 
         print(f'{self.num_latents=}')
-
-        # print(f'{self.model.frame_channels=}')
         self.use_pitch = hasattr(self.model, 'pitch_xform') and self.model.pitch_xform
+
+        self.pause()
+        self.text_rep = None
+        self.needs_model_replace = False
+
+        self.launch_text_update()
+
+        return {}
 
     def load_vocoder_model(self, rave_path):
         """helper for loading RAVE vocoder model, called on initialization but can also be called from GUI"""
+        # self.kill_step_thread()
         # TODO: The audio engine sampling rate gets set depending on the sampling rate from the vocoder. 
         #   When loading a new vocoder model we need to add some logic to make sure the new vocoder has the same sample rate as the audio system.
         if OutMode.SYNTH_AUDIO in self.out_mode:
@@ -418,6 +459,10 @@ class Backend:
         else:
             self.rave = None
             self.rave_sr = None
+        # self.launch_step_thread()
+
+        if self.stream is not None and self.rave_sr != self.stream.samplerate:
+            self.set_audio_device()
     
     @property
     def num_latents(self):
@@ -474,8 +519,9 @@ class Backend:
         # should probably do this more gracefully
         exit(0) # exit the backend process
 
-    def set_text(self, text:str) -> str:
+    def set_text(self, text:str):
         """
+        Set a new text and flag it for tokenizing/embedding via the model.
         Compute embeddings for & store a new text, replacing the old text.
         Returns the processed plain text synchronously while running the 
         text embedding model in a thread.
@@ -491,13 +537,40 @@ class Backend:
             and self.text_update_thread.is_alive()
         ):
             print('warning: text update still pending')
+        self.text = text
+        self.launch_text_update()
 
-        # TODO: more general text preprocessing
-        text, start, end = self.extract_loop_points(text)
-        assert self.text_model is not None, "error: no text encoder loaded"
+    def launch_text_update(self):
+        # text processing runs in its own thread
+        self.text_update_thread = Thread(
+            target=self._update_text, 
+            args=(self.text,), daemon=True)
+        self.text_update_thread.start()
+    
+    def _update_text(self, text):
+        """runs in a thread"""
+        # store the length of the common prefix between old/new text
+        # if self.text is None:
+        #     self.prefix_len = 0
+        # else:
+        #     for i,(a,b) in enumerate(zip(text, self.text)):
+        #         print(i, a, b)
+        #         if a!=b: break
+        #     self.prefix_len = i
+
+        # assert self.text_model is not None, "error: no text encoder loaded"
+        # wait until text model is set if necessary
+        while self.text_model is None:
+            time.sleep(1e-2)
+
+         # TODO: more general text preprocessing
+        text, start, end = self.extract_loop_points(self.text)
+        if self.text_model is None:
+            print("warning: no text encoder loaded")
+            return ''
         tokens, text, idx_map = self.text_model.tokenize(text)
         # print(start, end, idx_map)
-        # NOTE: positions in text may change fron tokenization (end tokens)
+        # NOTE: positions in text may change from tokenization (end tokens)
         if start < len(idx_map):
             start = idx_map[start]
         else:
@@ -507,16 +580,31 @@ class Backend:
         else:
             end = None
 
-        # text processing runs in its own thread
-        self.text_update_thread = Thread(
-            target=self._update_text, 
-            args=(text, tokens, start, end), daemon=True)
-        self.text_update_thread.start()
+        # store a mapping from old text positions to new
+        if self.text is None:
+            text_index_map = lambda x:x
+        else:
+            _,_,tm = lev(self.text, text)
+            text_index_map = lambda x: tm[x] if x < len(tm) else len(text)-1
 
-        return text
+        # lock should keep multiple threads from trying to run the text encoder
+        # at once in case `input_text` is called rapidly
+        with self.lock:
+            with torch.inference_mode():
+                # these are attributes which need to be set when reset occurs
+                self.reset_values.update(dict(
+                    text_rep = self.text_model.encode(tokens),
+                    text_index_map = text_index_map,
+                    text_tokens = tokens,
+                    text = text,
+                    gen_loop_start = start,
+                    gen_loop_end = end,
+                ))
+            # flag for a model reset
+            self.reset()
 
     def extract_loop_points(self, text, tokens='<>'):
-        """helper for `set_text`"""
+        """helper for `_update_text`"""
         start_tok, end_tok = tokens
         # TODO: could look for matched brackets, have multiple loops...
         start = text.find(start_tok) # -1 if not found
@@ -534,41 +622,6 @@ class Backend:
             end = max(0, end - 1)
         # print(text, end)
         return text, start, end
-    
-    def _update_text(self, text, tokens, start, end):
-        """runs in a thread"""
-        # store the length of the common prefix between old/new text
-        # if self.text is None:
-        #     self.prefix_len = 0
-        # else:
-        #     for i,(a,b) in enumerate(zip(text, self.text)):
-        #         print(i, a, b)
-        #         if a!=b: break
-        #     self.prefix_len = i
-
-        assert self.text_model is not None, "error: no text encoder loaded"
-
-        # store a mapping from old text positions to new
-        if self.text is None:
-            text_index_map = lambda x:x
-        else:
-            _,_,tm = lev(self.text, text)
-            text_index_map = lambda x: tm[x] if x < len(tm) else len(text)-1
-
-        # lock should keep multiple threads from trying to run the text encoder
-        # at once in case `input_text` is called rapidly
-        with self.lock:
-            with torch.inference_mode():
-                # these are attributes which need to be set when reset occurs
-                self.reset_values = dict(
-                    text_rep = self.text_model.encode(tokens),
-                    text_index_map = text_index_map,
-                    text_tokens = tokens,
-                    text = text,
-                    gen_loop_start = start,
-                    gen_loop_end = end,
-                )
-            self.reset()
 
     def set_biases(self, biases:List[float]):
         self.latent_biases = biases
@@ -999,11 +1052,12 @@ class Backend:
 
     def step(self, timestamp):
         """compute one vocoder frame of generation or sampler"""
-        # if self.frontend_q.qsize() > 100:
-            # self.frontend_q.get()
-            # print('frontend queue full, dropping')
 
         state:Dict[str,Any] = {'text':self.text}
+
+        # pause, swap out models, zero text
+        if self.needs_model_replace:
+            state |= self.do_model_replace()
 
         # reset text and model states
         if self.needs_reset:
@@ -1032,9 +1086,10 @@ class Backend:
             with torch.inference_mode():
                 bias = torch.tensor(self.latent_biases)[None]
                 if state.get('latent_t') is not None:
-                    state['latent_t'] += bias
+                    l = min(state['latent_t'].shape[1], bias.shape[1])
+                    state['latent_t'][:,:l] += bias[:,:l]
                 else:
-                    print()
+                    print("no latent_t in state")
                 
 
         # send to frontend

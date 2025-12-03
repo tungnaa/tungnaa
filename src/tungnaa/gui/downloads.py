@@ -7,13 +7,15 @@ def get_local_metadata_files(dirs):
         d = Path(d)
         files = d.glob('tts/*.md')
         for f in files:
-            yield d, f 
+            yield d, f
 
 def get_remote_metadata_files(repos):
     if not len(repos):
+        print('no repos specified')
         return
     fs = hf.HfFileSystem()
     for repo in repos:
+        print(f'searching HF {repo=}')
         hf_files = fs.glob(f'{repo}/models/tts/*.md')
         # download and cache each markdown file
         for f in hf_files:
@@ -37,9 +39,9 @@ def read_remote_models_info(repos):
         yield (repo, k, read_markdown(f))
 
 def read_local_models_info(model_dirs):
+    "generate triples of models dir, model path, model card markdown"
     for d, path in get_local_metadata_files(model_dirs):
-        k = path.stem
-        yield (d, k, read_markdown(path))
+        yield (d, path.with_suffix('.ckpt'), read_markdown(path))
 
 def dl_model_from_available(available_models, tts, vocoder):
     for repo,name,markdown in available_models:

@@ -10,6 +10,7 @@ import numpy.typing as npt
 import typing
 from pathlib import Path
 from importlib import resources
+import traceback
 
 import fire
 from PySide6 import QtCore, QtWidgets, QtGui, QtCharts
@@ -79,6 +80,7 @@ class Proxy:
                 # if self.parent_conn.poll():
                 try:
                     assert self.parent_conn.recv()
+                    print("""backend started""")
                 except AssertionError:
                     print("""backend process failed to start""")
                     raise
@@ -90,7 +92,7 @@ class Proxy:
             if callable(attr):
                 # return a function which when called, defers onto the backend process
                 def f(*a, **kw):
-                    # print(name)
+                    # print([name, a, kw])
                     self.parent_conn.send([name, a, kw])
                 return f
             else:
@@ -120,12 +122,16 @@ class Proxy:
 
 
 # save some Qt boilerplate
-def Layout(*items, cls=QtWidgets.QHBoxLayout, spacing=None, margins=None):
+def Layout(*items, cls=QtWidgets.QHBoxLayout, spacing=None, margins=None, stretch=None):
     l = cls()
     if spacing is not None:
         l.setSpacing(spacing)
     if margins is not None:
         l.setContentsMargins(*margins)
+    if stretch is not None:
+        raise NotImplementedError
+        # for k,v in stretch.items():
+            # l.setStretch(k,v)
     for item in items:
         if isinstance(item, QtWidgets.QWidget):
             l.addWidget(item)
@@ -412,7 +418,7 @@ class RaveLatents(QtWidgets.QWidget):
         for bias,_ in self.latents:
             bias.setValue(value);
 
-    def set_latents(self, values:typing.Union[list, npt.ArrayLike]):
+    def set_latents(self, values:list|npt.ArrayLike):
         """
         Set latent values in the gui. 
         values > the number of sliders are ignored
@@ -753,7 +759,8 @@ class OSCController(threading.Thread):
         if self.osc_server is not None:
             self.unserve_osc()
 
-        self.osc_server = pythonosc.osc_server.ThreadingOSCUDPServer(address, self.osc_dispatcher)
+        self.osc_server = pythonosc.osc_server.ThreadingOSCUDPServer(
+            address, self.osc_dispatcher)
         self.daemon = True
         #self.osc_server_thread = threading.Thread(target=run_osc_server, args=(self,), daemon=True)
         self.start()
@@ -892,22 +899,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.model_selector = QtWidgets.QComboBox()
         self.model_selector.currentTextChanged.connect(self.model_changed)
         self.model_selector_area = HBoxLayout(
-            QtWidgets.QLabel("model:"),
-            self.model_selector,
-            )
+            QtWidgets.QLabel("model:"), self.model_selector, 
+            spacing=0, margins=(12,0,12,0))
         self.vocoder_selector = QtWidgets.QComboBox()
         self.vocoder_selector.currentTextChanged.connect(self.vocoder_changed)
         self.vocoder_selector_area = HBoxLayout(
-            QtWidgets.QLabel("vocoder:"),
-            self.vocoder_selector,
-            )
+            QtWidgets.QLabel("vocoder:"), self.vocoder_selector,
+            spacing=0, margins=(12,0,12,0))
         self.audio_device_selector = QtWidgets.QComboBox()
         self.audio_device_selector.currentTextChanged.connect(
             self.audio_device_changed)
         self.audio_device_selector_area = HBoxLayout(
-            QtWidgets.QLabel("audio device:"),
-            self.audio_device_selector,
-            )
+            QtWidgets.QLabel("audio device:"), self.audio_device_selector, spacing=0, margins=(12,0,12,0))
 
         self._generate_action = QtGui.QAction("Generate", self)
         self._generate_action.setStatusTip("Start autoregression")
@@ -1079,8 +1082,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sampler_stop_at_end_toggle_action.setChecked(True)
 
     def model_changed(self):
-        print(self.model_selector.currentData())
-        # TODO
+        d,path,md = (self.model_selector.currentData())
+        if self.backend is not None and self.use_backend:
+            self.backend.set_tts_model(path)
+        if md.Meta is not None:
+            vocoder_name = md.Meta.get('vocoder')
+            if vocoder_name is not None:
+                print(d/'vocoder'/vocoder_name)
+            else:
+                print("no vocoder in metadata")
+        else:
+            print("no metadata in markdown")
+        print("model_changed return")
 
     def vocoder_changed(self):
         print(self.vocoder_selector.currentData())
@@ -1104,9 +1117,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def image_clicked(self, ev):
         # print(ev.pos)
-        self.backend.set_momentary_alignment((ev.pos().x(), 1))
-        self.backend.set_state_by_step(int(ev.pos().y()))
-        self.backend.generate()
+        if self.backend is not None and self.use_backend:
+            self.backend.set_momentary_alignment((ev.pos().x(), 1))
+            self.backend.set_state_by_step(int(ev.pos().y()))
+            self.backend.generate()
         # self.backend.set_momentary_alignment(
         #     self.attention_graph.get_slidervalue_as_params())
 
@@ -1118,7 +1132,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.frame += 1
         new_data = list()
         # empty message queue, update attention graph & RAVE latents
-        if self.use_backend: 
+        if self.backend is not None and self.use_backend:
 
             if self.stress_gui is not None:
                 t = time.time_ns()
@@ -1139,7 +1153,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 # for _ in range(self.backend.frontend_q.qsize()):
                 while self.backend.parent_conn.poll():
                     try:
-                        # framedict = self.backend.frontend_q.get_nowait()
                         framedict = self.backend.parent_conn.recv()
                         if not self.latents.is_init and 'num_latents' in framedict and 'use_pitch' in framedict:
                             self.latents._init(
@@ -1148,8 +1161,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         new_data.append(framedict)
                     except queue.Empty as ex:
                         break
-            except Exception as e:
-                print(e)
+            except Exception:
+                traceback.print_exc()
                 exit(0) ### debug
             
         else: # Do not use backend, instead generate random data.. useful for testing the gui (maybe?)
@@ -1203,7 +1216,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         # TODO: cleanup OSC/networking connections
         print(f"Application Close {e}")
-        self.backend.cleanup()
+        if self.backend is not None and self.use_backend:
+            self.backend.cleanup()
         e.accept()
         #e.ignore() # Under some conditions ignore app close?
 
@@ -1228,18 +1242,20 @@ class MainWindow(QtWidgets.QMainWindow):
             print(f"Encoding: {txtval}")
             self.text_encoding_status.setText("ʭʬʭʬʭʬʭʬʭʬʭʬʭʬʭʬʭ encoding.... ʬʭʬʭʬʭʬʭʬʭʬʭʬʭʬʭʬʭ")
             # this returns the text with start/end tokens added and loop points stripped
-            self.backend.set_text(text=txtval)
+            if self.backend is not None and self.use_backend:
+                self.backend.set_text(text=txtval)
         else:
             print("No backend enabled to encode text: ignoring...")
 
     def sampler_step(self, step:int, autoplay:bool) -> None:
-        self.backend.set_sampler_step(step)
-        if autoplay:
-            # TODO: Once sampler mode is a toggle rather than a trigger, need to implement something like this to put the GUI in sampler mode...
-            # if gui not_in_sampler_mode                
-            #     self._sampler_action.toggle(True)
-            # else:
-            self.backend.sampler()
+        if self.backend is not None and self.use_backend:
+            self.backend.set_sampler_step(step)
+            if autoplay:
+                # TODO: Once sampler mode is a toggle rather than a trigger, need to implement something like this to put the GUI in sampler mode...
+                # if gui not_in_sampler_mode                
+                #     self._sampler_action.toggle(True)
+                # else:
+                self.backend.sampler()
 
     def loop_text(self, **kw):
         """
@@ -1250,7 +1266,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if 'text' not in kw:
             kw['text'] = self.samp_text_input.toPlainText()
-        self.backend.set_sampler_loop_text(**kw)
+        if self.backend is not None and self.use_backend:
+            self.backend.set_sampler_loop_text(**kw)
 
     def loop_index(self, **kw):
         """
@@ -1259,7 +1276,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.use_backend:
             print("No backend enabled to loop indices: ignoring...")
             return
-        self.backend.set_sampler_loop_index(**kw)
+        if self.backend is not None and self.use_backend:
+            self.backend.set_sampler_loop_index(**kw)
 
     def play_generate(self, val:bool):
         print(f"Play autoregressive frame generator")
@@ -1268,20 +1286,24 @@ class MainWindow(QtWidgets.QMainWindow):
             # self.encode_text()
         if self.attention_graph.text is None:
             self.encode_text()
-        self.backend.generate()
+        if self.backend is not None and self.use_backend:
+            self.backend.generate()
 
     def play_sampler(self, val:bool):
         print(f"Play sampler")
-        self.backend.sampler()
+        if self.backend is not None and self.use_backend:
+            self.backend.sampler()
 
     def pause(self, val:bool):
         print(f"Pause generation or sampler")
-        self.backend.pause()
+        if self.backend is not None and self.use_backend:
+            self.backend.pause()
 
     def reset_autoregression(self, val:bool):
         print(f"Reset autoregression history")
         # self.attention_graph.reset()
-        self.backend.reset()
+        if self.backend is not None and self.use_backend:
+            self.backend.reset()
 
     def set_temperature(self, temp:float) -> None:
         """
@@ -1295,7 +1317,8 @@ class MainWindow(QtWidgets.QMainWindow):
         elif temp < 0:
             temp=0
         self.temperature_slider.setValue(temp)
-        self.backend.set_temperature(temp)
+        if self.backend is not None and self.use_backend:
+            self.backend.set_temperature(temp)
 
     def add_temperature(self, temp:float) -> None:
         """
@@ -1314,15 +1337,18 @@ class MainWindow(QtWidgets.QMainWindow):
         print(f"Alignment Mode Changed To:{self.mode}")
 
     def toggle_latent_feedback(self, toggle:bool):
-        self.backend.set_latent_feedback(toggle)
+        if self.backend is not None and self.use_backend:
+            self.backend.set_latent_feedback(toggle)
         print(f"Latent Feedback status changed to:{toggle}")
 
     def toggle_generate_stop_at_end(self, toggle:bool):
-        self.backend.set_generate_stop_at_end(toggle)
+        if self.backend is not None and self.use_backend:
+            self.backend.set_generate_stop_at_end(toggle)
         print(f"Stop Generate At End status changed to:{toggle}")
 
     def toggle_sampler_stop_at_end(self, toggle:bool):
-        self.backend.set_sampler_stop_at_end(toggle)
+        if self.backend is not None and self.use_backend:
+            self.backend.set_sampler_stop_at_end(toggle)
         print(f"Stop Sampler At End status changed to:{toggle}")
 
     def set_alignment_mode(self, mode:str='infer') -> None:
@@ -1442,12 +1468,12 @@ def main(
     # get remote model sources
     repos = repo.split(',') if repo is not None else []
     remote_models_info = list(read_remote_models_info(repos))
-    print(f'{remote_models_info=}')
+    # print(f'{remote_models_info=}')
 
     # get local model sources
     model_dirs = model_dir.split(',') if model_dir is not None else []
     local_models_info = list(read_local_models_info(model_dirs))
-    print(f'{local_models_info=}')
+    # print(f'{local_models_info=}')
 
     ### DEBUG
     # if tts is None and len(local_models_info):
@@ -1468,7 +1494,8 @@ def main(
     except FileNotFoundError:
         if len(remote_models_info):
             print(f'searching remote repo for model "{tts}"...')
-            tts, vocoder, model_name, model_meta = dl_model_from_repo(repos, tts, vocoder)
+            tts, vocoder, model_name, model_meta = dl_model_from_repo(
+                repos, tts, vocoder)
 
     if no_backend:
         backend = None
@@ -1511,13 +1538,10 @@ def main(
 
     print("GUI ready")
 
-    ### DEBUG
-    # backend.set_audio_device(
-        # audio_out=0, audio_block=audio_block, 
-        # audio_channels=None, buffer_frames=buffer_frames+1)
+    ### TODO move into constructor
     for item in local_models_info:
         _,n,_ = item
-        win.model_selector.addItem(n, item)
+        win.model_selector.addItem(n.stem, item)
     device_list = sd.query_devices()
     assert isinstance(device_list, sd.DeviceList)
     for item in device_list:

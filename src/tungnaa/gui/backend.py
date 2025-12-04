@@ -7,6 +7,13 @@ a step_thread loops, checking for requested audio blocks and generating them
 short-lived threads are also created to async load new models and encode text
 """
 
+# reset can be called at any time, models may not be loaded
+# reset assumes models are loaded
+# setting text triggers reset
+#    but this waits for model to be loaded
+# setting model -> set text -> reset
+# so just need to ignore resets from frontend before model is loaded
+
 from typing import Optional, Callable, Union, Tuple, List, Dict, Any
 from numbers import Number
 from enum import Enum, Flag
@@ -99,8 +106,6 @@ class Utterance(list):
 
 class Backend:
     def __init__(self,
-        checkpoint:str|Path,
-        rave_path:str|Path|None=None,
         audio_in:str|None=None,
         audio_out:str|int=None,
         audio_block:int|None=None,
@@ -180,8 +185,6 @@ class Backend:
         self.buffer_frames = buffer_frames
         self.stream = None
 
-        self.checkpoint = checkpoint
-        self.vocoder_path = rave_path
         self.vocoder_sr = None
         self.model = None
         self.text_model = None
@@ -190,6 +193,8 @@ class Backend:
         self.step_thread = None
         self.raw_text = ''
         self.text = None
+
+        self.use_pitch = None
 
         # self.stepping = False # for stopping the step thread while changing model
         # call this from both __init__ and run
@@ -240,12 +245,6 @@ class Backend:
         self.audio_q = Queue(self.buffer_frames)     
         self.trigger_q = Queue(self.buffer_frames) 
 
-        # self.load_tts_model(checkpoint=self.checkpoint)
-
-        ### synthesis in python:
-        # load RAVE model
-        self.set_vocoder(self.vocoder_path)
-        # self.set_vocoder(self.vocoder_path)
         self.step_thread = Thread(target=self.step_loop, daemon=True)
         self.step_thread.start()
         # self.launch_step_thread()
@@ -1068,7 +1067,7 @@ class Backend:
             state |= self.do_vocoder_replace()
 
         # reset text and model states
-        if self.needs_reset:
+        if self.needs_reset and self.model is not None:
             state |= self.do_reset()
 
         # print(f'{self.frontend_conn=} {threading.get_native_id()=} {os.getpid()=}')

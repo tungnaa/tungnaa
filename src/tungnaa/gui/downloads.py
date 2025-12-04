@@ -18,6 +18,7 @@ class RemoteVocoderInfo():
         return hf.hf_hub_download(repo_id=self.repo, filename=self.path)
 
 class LocalModelInfo():
+    """local model based on .md file and tts/ vocoder/ dir structure"""
     def __init__(self, md_path):
         """"""
         md_path = Path(md_path)
@@ -35,11 +36,30 @@ class LocalModelInfo():
     
     def get_vocoder_info(self):
         meta = self.get_markdown().Meta
+        if meta is None: return None
         name = meta.get("vocoder")
         if name is None: return None
-        LocalVocoderInfo(name, self._md_path.parent.parent/'vocoder'/name)
-
+        return LocalVocoderInfo(name, self._md_path.parent.parent/'vocoder'/name)
+    
+class ManuallyPairedModelInfo():
+    """associate TTS and vocoder files given without metadata"""
+    def __init__(self, tts_path, vocoder_path):
+        self.tts_path = Path(tts_path)
+        self.name = self.tts_path.stem
+        if vocoder_path is None:
+            self.vocoder_info = None
+        else:
+            vocoder_path = Path(vocoder_path)
+            self.vocoder_info = LocalVocoderInfo(vocoder_path.stem, vocoder_path)
+    def get_markdown(self):
+        return None
+    def get_tts_path(self):
+        return self.tts_path
+    def get_vocoder_info(self):
+        return self.vocoder_info
+    
 class HFModelInfo():
+    """model in huggingface repo based on .md file and tts/ vocoder/ dir structure"""
     def __init__(self, repo, md_path):
         """"""
         self.repo = repo

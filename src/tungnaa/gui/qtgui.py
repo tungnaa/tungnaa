@@ -5,6 +5,7 @@ import random
 import queue
 import functools as ft
 import threading
+import itertools as it
 from typing import List, Dict, Tuple, Any
 import numpy as np
 import numpy.typing as npt
@@ -20,7 +21,7 @@ import pythonosc
 import pythonosc.osc_server
 
 import tungnaa.gui
-from tungnaa.gui.downloads import get_remote_model_info, get_local_model_info
+from tungnaa.gui.downloads import get_remote_model_info, get_local_model_info, ManuallyPairedModelInfo, LocalVocoderInfo
 
 # need this to get the list of devices -- could send it from the backend but
 # no need to overcomplicate for now...
@@ -1381,10 +1382,12 @@ class MainWindow(QtWidgets.QMainWindow):
 # Main entry point for Fire
 def main(
     # models
-    tts:Path='tungnaa_119_vctk',
+    tts:Path=None,
     vocoder:Path=None,
-    repo='Intelligent-Instruments-Lab/tungnaa-models-public',
-    model_dir=None,
+    initial_tts:str='tungnaa_119_vctk',
+    initial_vocoder:str=None,
+    repo:str='Intelligent-Instruments-Lab/tungnaa-models-public',
+    model_dir:Path=None,
     # output modes
     synth_audio:bool=True,
     latent_audio:bool=False,
@@ -1409,9 +1412,12 @@ def main(
     """Tungnaa Text to Voice
     
     Args:
-        tts: path to TTS model, or name of model in repo
+        tts: path to TTS model
         vocoder: path to vocoder model
+        initial_tts: name of initial TTS model from repo or model_dir sources
+        initial_vocoder: name of initial vocoder model from repo or model_dir sources
         repo: huggingface repo to search for models
+        model_dir: local directory to search for models
 
         synth_audio: send stereo audio from Python
         latent_audio: pack latents into a mono audio signal, 
@@ -1476,36 +1482,11 @@ def main(
     # get local model sources
     model_dirs = model_dir.split(',') if model_dir is not None else []
     local_models_info = list(get_local_model_info(model_dirs))
-    # print(f'{local_models_info=}')
-
-    ### DEBUG
-    # if tts is None and len(local_models_info):
-    #     d,name,meta = local_models_info[0]
-    #     tts = (d/'tts'/name).with_suffix('.ckpt')
-    #     print(f'{tts=}')
-    #     print(meta.)
-    #     print(meta.Meta)
-    #     vocoder = d/'vocoder'/meta.Meta["vocoder"]
-
-    # exit(0) ### DEBUG
-
-    # if tts is not a local file, download model from repo
-    # also sets the vocoder unless it it explicitly set to something else
-    model_name, model_meta = None, None
-    try:
-        with open(tts): pass
-    except FileNotFoundError:
-        if len(remote_models_info):
-            print(f'searching remote repo for model "{tts}"...')
-            tts, vocoder, model_name, model_meta = dl_model_from_repo(
-                repos, tts, vocoder)
 
     if no_backend:
         backend = None
     else:
         backend = Proxy(tungnaa.gui.backend.Backend(
-            checkpoint=tts, 
-            rave_path=vocoder,
             audio_out=audio_out,
             audio_block=audio_block,
             # audio_channels=audio_channels,
@@ -1530,25 +1511,33 @@ def main(
         text=text,
         sampler_text=sampler_text,
         )
-    
 
     available_geometry = win.screen().availableGeometry()
     win.resize(available_geometry.width() / 2 * 1.063, available_geometry.height())
     win.move((available_geometry.width() - win.width()), 0)
     win.show()
 
-    win.set_metadata(model_name, model_meta)
-
     print("GUI ready")
 
-    ### TODO move into constructor
-    for item in remote_models_info:
+    manual_models_info = []
+    if tts is not None:
+        manual_models_info.append(ManuallyPairedModelInfo(tts, vocoder))
+    elif vocoder is not None:
+        # case where vocoder supplied but not tts
+        vocoder = Path(vocoder)
+        vocoder_info = LocalVocoderInfo(vocoder.stem, vocoder)
+        win.vocoder_selector.addItem(vocoder_info.name, vocoder_info)
+
+    ### TODO move into MainWindow instead of main
+    for item in it.chain(
+            manual_models_info, local_models_info, remote_models_info):
         win.model_selector.addItem(item.name, item)
         voc_info = item.get_vocoder_info()
         if voc_info is not None:
+            print(voc_info.name, voc_info.get_path())
             win.vocoder_selector.addItem(voc_info.name, voc_info)
-    for item in local_models_info:
-        win.model_selector.addItem(item.name, item)
+        else:
+            print(f"no vococder info for {item.name}")
 
     device_list = sd.query_devices()
     assert isinstance(device_list, sd.DeviceList)
@@ -1558,6 +1547,17 @@ def main(
             name = f"{item['index']}: '{item['name']}' (I/O {item['max_input_channels']}/{item['max_output_channels']}) (SR: {int(item['default_samplerate'])})"
             win.audio_device_selector.addItem(name, item)
         # print(item)
+
+    if initial_tts is not None:
+        if win.model_selector.findText(initial_tts) >= 0:
+            win.model_selector.setCurrentText(initial_tts)
+        else:
+            print(f'warning: TTS model "{initial_tts}" not recognized')
+    if initial_vocoder is not None:
+        if win.model_selector.findText(initial_tts) >= 0:
+            win.vocoder_selector.setCurrentText(initial_vocoder)
+        else:
+            print(f'warning: vocoder "{initial_vocoder}" not recognized')
 
     sys.exit(app.exec())
 

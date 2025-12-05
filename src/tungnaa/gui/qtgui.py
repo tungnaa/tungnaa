@@ -1440,15 +1440,6 @@ def main(
         stress_gui: for testing, add this many seconds delay in `update`
         
     """
-
-    if audio_out == 'default':
-        audio_out = None
-    if audio_out is not None:
-        if isinstance(audio_out, str) and audio_out.isdecimal():
-            audio_out = int(audio_out)
-        elif not isinstance(audio_out, int):
-            raise TypeError(f"Invalid audio device id '{audio_out}', must be either an integer or 'default'")
-
     app = QtWidgets.QApplication(sys.argv)
     QtCore.QCoreApplication.setOrganizationName("Intelligent Instruments Lab")
     QtCore.QCoreApplication.setApplicationName("Tungnaa")
@@ -1487,7 +1478,7 @@ def main(
         backend = None
     else:
         backend = Proxy(tungnaa.gui.backend.Backend(
-            audio_out=audio_out,
+            # audio_out=audio_out,
             audio_block=audio_block,
             # audio_channels=audio_channels,
             synth_audio=synth_audio,
@@ -1539,8 +1530,34 @@ def main(
         else:
             print(f"no vococder info for {item.name}")
 
+    # audio device
     device_list = sd.query_devices()
     assert isinstance(device_list, sd.DeviceList)
+    out_devices = [
+        item for item in device_list if item.get('max_output_channels', 0)]
+    out_device_names = [item['name'] for item in out_devices]
+    out_device_indices = [item['index'] for item in out_devices]
+
+    if audio_out is None or audio_out == 'default':
+        # use default according to sounddevice
+        audio_out = sd.default.device[1]
+
+    if isinstance(audio_out, str) and audio_out.isdecimal():
+        # index is supplied
+        audio_out = int(audio_out)
+    
+    if isinstance(audio_out, int):
+        # get index *in menu* from index in devicelist
+        if audio_out in out_device_indices:
+            audio_out = out_device_indices.index(audio_out)
+        else:
+            print(f'warning: {audio_out=} not an output device')
+    elif audio_out in out_device_names:
+        # get index *in menu* from name is devicelist
+        audio_out = out_device_names.index(audio_out)
+    else:
+        print(f'warning: audio output "{audio_out}" not recognized')
+
     for item in device_list:
         if item.get('max_output_channels', 0):
             # name = item.get('name', item.get('index'))
@@ -1548,6 +1565,12 @@ def main(
             win.audio_device_selector.addItem(name, item)
         # print(item)
 
+    win.audio_device_selector.setCurrentIndex(audio_out)
+   
+    
+
+    # TODO figure out how to replace initial triggering of set_model
+    # instead of adding a second one
     if initial_tts is not None:
         if win.model_selector.findText(initial_tts) >= 0:
             win.model_selector.setCurrentText(initial_tts)

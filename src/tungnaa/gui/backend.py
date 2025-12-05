@@ -106,14 +106,12 @@ class Utterance(list):
 
 class Backend:
     def __init__(self,
-        audio_in:str|None=None,
-        audio_out:str|int=None,
         audio_block:int|None=None,
         audio_channels:int|None=None,
         # sample_rate:int=None,
-        synth_audio:bool|None=None,
-        latent_audio:bool|None=None,
-        latent_osc:bool|None=None,
+        synth_audio:bool=True,
+        latent_audio:bool=False,
+        latent_osc:bool=False,
         osc_sender=None,
         buffer_frames:int=1,
         profile:bool=True,
@@ -125,8 +123,6 @@ class Backend:
         Args:
             checkpoint: path to tungnaa checkpoint file
             rave_path: path to rave vocoder to use python sound
-            audio_in: sounddevice input name/index if using python audio
-            audio_out: sounddevice output name/index if using python audio
             audio_block: block size if using python audio
             synth_audio: if True, vocode in python and send stereo audio
             latent_audio: if True, pack latents into a mono audio channel
@@ -137,13 +133,6 @@ class Backend:
         """
         self.jit = jit
         self.profile = Profiler(profile)
-        # default output modes
-        if synth_audio is None:
-            synth_audio = rave_path is not None
-        if latent_audio is None:
-            latent_audio = rave_path is None
-        if latent_osc is None:
-            latent_osc = False
 
         self.reset_values = {}
 
@@ -179,7 +168,7 @@ class Backend:
         self.max_model_state_storage = max_model_state_storage
 
         # self.audio_in = audio_in
-        self.audio_out = audio_out
+        self.audio_out = None
         self.audio_block = audio_block
         self.audio_channels = audio_channels
         self.buffer_frames = buffer_frames
@@ -216,12 +205,6 @@ class Backend:
         # TODO make this a method + stored schema instead of lambda
         self.text_index_map = lambda x:x
 
-        # self.set_audio_device(
-        #     audio_out=self.audio_out,
-        #     audio_block=self.audio_block, 
-        #     audio_channels=self.audio_channels, 
-        #     buffer_frames=self.buffer_frames)
-
         self.text = None
         self.text_rep = None
         self.align_params = None
@@ -247,7 +230,6 @@ class Backend:
 
         self.step_thread = Thread(target=self.step_loop, daemon=True)
         self.step_thread.start()
-        # self.launch_step_thread()
  
     def step_loop(self):
         """model stepping thread
@@ -269,7 +251,6 @@ class Backend:
             audio_out=None, 
             audio_block=None, 
             audio_channels=None, 
-            # buffer_frames=None
             ):
         ### audio output:
         # make sounddevice stream
@@ -277,7 +258,6 @@ class Backend:
         if audio_out is None: audio_out = self.audio_out
         if audio_block is None: audio_block = self.audio_block
         if audio_channels is None: audio_channels = self.audio_channels
-        # if buffer_frames is None: buffer_frames = self.buffer_frames
 
         # print(f'{audio_out=} {audio_block=} {audio_channels=} {buffer_frames=}')
         
@@ -303,25 +283,19 @@ class Backend:
             devicelist = sd.query_devices()
             assert isinstance(devicelist, sd.DeviceList)
             
-            # None throws an error on linux, on mac it uses the default device
-            # Let's make this behavior explicit.
-            if audio_out is None:
-                audio_out = sd.default.device[1]
-
             audio_device = None
             for dev in devicelist:
                 # search by either name or index
                 if audio_out in [dev['index'], dev['name']]:
                     audio_device = dev
                     # audio_device_sr = dev['default_samplerate']
-                # print(f"{dev['index']}: '{dev['name']}' {dev['hostapi']} (I/O {dev['max_input_channels']}/{dev['max_output_channels']}) (SR: {dev['default_samplerate']})")
 
             print(f"USING AUDIO OUTPUT DEVICE {audio_out}:{audio_device}")
 
             self.active_frame:torch.Tensor|None = None 
             self.frame_counter:int = 0
 
-            sd.default.device = audio_out
+            # sd.default.device = audio_out
             if self.vocoder_sr:
                 if audio_device and audio_device['default_samplerate'] != self.vocoder_sr:
                     # this should not be an error. On OSX/CoreAudio you can set the device sample rate to the model sample rate.
@@ -337,12 +311,12 @@ class Backend:
                 if audio_device is not None:
                     print(f"DEVICE SAMPLING RATE: {audio_device['default_samplerate']}")
 
-            # TODO: Tungnaa only uses audio output. Shouldn't we always be using sd.OutputStream?
-            try:
-                assert audio_out is not None and len(audio_out)==2
-                stream_cls = sd.Stream
-            except Exception:
-                stream_cls = sd.OutputStream
+            # # TODO: Tungnaa only uses audio output. Shouldn't we always be using sd.OutputStream?
+            # try:
+            #     assert audio_out is not None and len(audio_out)==2
+            #     stream_cls = sd.Stream
+            # except Exception:
+            stream_cls = sd.OutputStream
 
             restart = False
             if self.stream is not None:
@@ -356,7 +330,6 @@ class Backend:
                 callback=self.audio_callback,
                 samplerate=self.vocoder_sr, 
                 blocksize=audio_block, 
-                #device=(audio_in, audio_out)
                 device=audio_out,
                 channels=audio_channels
             )
@@ -465,7 +438,6 @@ class Backend:
             vocoder_sr = None
         self.replace_vocoder = (vocoder, vocoder_sr, latent_size)
         self.needs_vocoder_replace = True
-        # self.launch_step_thread()
 
     def do_vocoder_replace(self):
         self.vocoder, self.vocoder_sr, latent_size = self.replace_vocoder

@@ -216,7 +216,7 @@ class AlignmentGraph(QtWidgets.QWidget):
         self.prev_tok = 0
 
         self.plot_widget = GraphicsLayoutWidget(self)
-        self.plot_widget.ci.layout.setContentsMargins(0,0,0,4)
+        self.plot_widget.ci.layout.setContentsMargins(0,0,0,0)
         self.plot_widget.ci.layout.setSpacing(0)
         self.plot = self.plot_widget.addPlot()
 
@@ -224,7 +224,7 @@ class AlignmentGraph(QtWidgets.QWidget):
         self.imageitem = AlignmentImageItem(image_clicked)
         # self.imageitem.setImage(image=self.imagedata.T)
         self.plot.addItem(self.imageitem)
-        self.plot.showAxes(True, showValues=(True, True, True, False))
+        self.plot.showAxes(True, showValues=(False, True, False, False))
         self.plot.invertY(False) # vertical axis zero at the bottom
         # no idea why, but fully transparent background is too light
         # black with alpha of 40 seems to match
@@ -328,16 +328,35 @@ class AlignmentGraph(QtWidgets.QWidget):
         self.imageitem.update()
         #self.plot.update()
         
+def clearLayout(layout: QtWidgets.QLayout):
+    """
+    from gemini
+    Safely clears a QLayout and deletes all associated widgets.
+    """
+    if layout is not None:
+        # Loop backwards to safely remove items while iterating
+        while layout.count():
+            item = layout.takeAt(0)
+            
+            # If the item is a widget, call deleteLater()
+            if item.widget() is not None:
+                item.widget().deleteLater()
+            
+            # If the item is a nested layout, recursively clear it
+            elif item.layout() is not None:
+                clearLayout(item.layout())
 
 class RaveLatents(QtWidgets.QWidget):
     def __init__(self, parent:QtWidgets.QWidget=None):
         super().__init__(parent)
 
-        self.latents = list()
         self.layout = QtWidgets.QHBoxLayout(self)
         self.is_init = False
 
     def _init(self, num_latents, pitch_slider):
+        self.latents = list()
+        clearLayout(self.layout)
+
         for idx in range(num_latents):
             if idx==0 and pitch_slider:
                 bmin, bmax = -100., 100.
@@ -353,7 +372,8 @@ class RaveLatents(QtWidgets.QWidget):
             bias_slider.setMinimum(bmin)
             bias_slider.setValue(0.0)
             bias_slider.doubleValueChanged.connect(
-                lambda val,latent=idx: self._bias_adjust(val, latent))
+                # lambda val,latent=idx: self._bias_adjust(val, latent))
+                ft.partial(self._bias_adjust, latent=idx))
             bias_slider.setStatusTip(f"bias latent dimension {idx}")
             
             value_meter = DoubleSlider(decimals=3, parent=self)
@@ -806,6 +826,14 @@ class MainWindow(QtWidgets.QMainWindow):
         stress_gui=None,
         text=None,
         sampler_text=None,
+        tts:Path=None,
+        vocoder:Path=None,
+        initial_tts:str=None,
+        initial_vocoder:str=None,
+        repo:str=None,
+        model_dir:Path=None,
+        audio_out:str|int=None,
+        synth_audio:bool=True
         ):
         print("MainWindow.__init__")
         super().__init__(parent)
@@ -818,6 +846,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setUnifiedTitleAndToolBarOnMac(True)
 
         self.mode = 'infer'
+        self.synth_audio = synth_audio
         
         self.update_fps = update_fps
         self.osc_listen_addr = osc_listen_addr
@@ -902,16 +931,93 @@ class MainWindow(QtWidgets.QMainWindow):
         self.addToolBar(self.toolbar_top) # Toolbar gets added to VLayout below
 
         self.model_selector = QtWidgets.QComboBox()
+        self.vocoder_selector = QtWidgets.QComboBox()
+
+        # get remote model sources
+        repos = repo.split(',') if repo is not None else []
+        remote_models_info = list(get_remote_model_info(repos))
+        print(f'{remote_models_info=}')
+
+        # get local model sources
+        model_dirs = model_dir.split(',') if model_dir is not None else []
+        local_models_info = list(get_local_model_info(model_dirs))
+
+        manual_models_info = []
+        if tts is not None:
+            manual_models_info.append(ManuallyPairedModelInfo(tts, vocoder))
+        elif vocoder is not None:
+            # case where vocoder supplied but not tts
+            vocoder = Path(vocoder)
+            vocoder_info = LocalVocoderInfo(vocoder.stem, vocoder)
+            self.vocoder_selector.addItem(vocoder_info.name, vocoder_info)
+
+        for item in it.chain(
+                manual_models_info, local_models_info, remote_models_info):
+            self.model_selector.addItem(item.name, item)
+            voc_info = item.get_vocoder_info()
+            if voc_info is not None:
+                print(voc_info.name, voc_info.get_path())
+                self.vocoder_selector.addItem(voc_info.name, voc_info)
+            else:
+                print(f"no vocoder info for {item.name}")
+
+        if initial_tts is not None:
+            if self.model_selector.findText(initial_tts) >= 0:
+                self.model_selector.setCurrentText(initial_tts)
+            else:
+                print(f'warning: TTS model "{initial_tts}" not recognized')
         self.model_selector.currentTextChanged.connect(self.model_changed)
         self.model_selector_area = HBoxLayout(
             QtWidgets.QLabel("model:"), self.model_selector, 
             spacing=0, margins=(12,0,12,0))
-        self.vocoder_selector = QtWidgets.QComboBox()
+        
+        if initial_vocoder is not None:
+            if self.vocoder_selector.findText(initial_vocoder) >= 0:
+                self.vocoder_selector.setCurrentText(initial_vocoder)
+            else:
+                print(f'warning: vocoder "{initial_vocoder}" not recognized')
         self.vocoder_selector.currentTextChanged.connect(self.vocoder_changed)
         self.vocoder_selector_area = HBoxLayout(
             QtWidgets.QLabel("vocoder:"), self.vocoder_selector,
             spacing=0, margins=(12,0,12,0))
+        self.vocoder_selector.setEnabled(self.synth_audio)
+
         self.audio_device_selector = QtWidgets.QComboBox()
+         # audio device
+        device_list = sd.query_devices()
+        assert isinstance(device_list, sd.DeviceList)
+        out_devices = [
+            item for item in device_list if item.get('max_output_channels', 0)]
+        out_device_names = [item['name'] for item in out_devices]
+        out_device_indices = [item['index'] for item in out_devices]
+
+        if audio_out is None or audio_out == 'default':
+            # use default according to sounddevice
+            audio_out = sd.default.device[1]
+
+        if isinstance(audio_out, str) and audio_out.isdecimal():
+            # index is supplied
+            audio_out = int(audio_out)
+        
+        if isinstance(audio_out, int):
+            # get index *in menu* from index in devicelist
+            if audio_out in out_device_indices:
+                audio_out = out_device_indices.index(audio_out)
+            else:
+                print(f'warning: {audio_out=} not an output device')
+        elif audio_out in out_device_names:
+            # get index *in menu* from name is devicelist
+            audio_out = out_device_names.index(audio_out)
+        else:
+            print(f'warning: audio output "{audio_out}" not recognized')
+
+        for item in device_list:
+            if item.get('max_output_channels', 0):
+                # name = item.get('name', item.get('index'))
+                name = f"{item['index']}: '{item['name']}' (I/O {item['max_input_channels']}/{item['max_output_channels']}) (SR: {int(item['default_samplerate'])})"
+                self.audio_device_selector.addItem(name, item)
+            # print(item)
+        self.audio_device_selector.setCurrentIndex(audio_out)
         self.audio_device_selector.currentTextChanged.connect(
             self.audio_device_changed)
         self.audio_device_selector_area = HBoxLayout(
@@ -1085,7 +1191,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.gui_update_timer.start((1.0 / self.update_fps) * 1000)
 
         self._generate_stop_at_end_toggle_action.setChecked(False) # make the default to babble like a river
-        self._sampler_stop_at_end_toggle_action.setChecked(True)
+        self._sampler_stop_at_end_toggle_action.setChecked(True) 
+
+        self.audio_device_changed()
+        self.model_changed()
+        if synth_audio:
+            self.vocoder_changed()
+       
 
     def model_changed(self):
         """handler for model selection"""
@@ -1103,7 +1215,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def vocoder_changed(self):
         """handler for vocoder selection"""
         voc_info = self.vocoder_selector.currentData()
-        if self.backend is not None and self.use_backend:
+        if self.backend is not None and self.use_backend and self.synth_audio:
             self.backend.set_vocoder(voc_info.get_path())
 
     def audio_device_changed(self):
@@ -1158,20 +1270,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 else:
                     raise ValueError(f"Unknown attention mode: {self.mode} - must be <infer|paint>")
 
-                # for _ in range(self.backend.frontend_q.qsize()):
+                # grab everything from backend pipe
                 while self.backend.parent_conn.poll():
                     try:
                         framedict = self.backend.parent_conn.recv()
-                        if not self.latents.is_init and 'num_latents' in framedict and 'use_pitch' in framedict:
-                            self.latents._init(
-                                framedict['num_latents'], framedict['use_pitch'])
-
                         new_data.append(framedict)
                     except queue.Empty as ex:
                         break
             except Exception:
                 traceback.print_exc()
-                exit(0) ### debug
+                # exit(0) ### debug
             
         else: # Do not use backend, instead generate random data.. useful for testing the gui (maybe?)
             new_attn_frame = np.zeros((1,self.attention_graph.num_encodings), dtype=np.float32)        
@@ -1198,15 +1306,23 @@ class MainWindow(QtWidgets.QMainWindow):
             new_data.append({
                 'latent_t': new_latent_frame, 'align_t': new_attn_frame})
             
-        # iterate through new_data and update the gui
+        # iterate through data from backend and update the gui
         for datadict in new_data:
+            # reset after text processing
             if datadict.get('reset', False):
-                # self.finish_reset(num_tokens=datadict['align_t'].shape[-1])
                 self.finish_reset(text=datadict['text'])
+            # plot alignments
             if 'align_t' in datadict and not datadict.get('sampler', False):
                 self.attention_graph.addFrame(
                     datadict['align_t'], datadict['text'])
-        
+            # configure vocoder controls
+            # TODO: handle use_pitch
+            if self.synth_audio and 'vocoder_num_latents' in datadict:
+                self.latents._init(datadict['vocoder_num_latents'], False)
+            if not self.synth_audio and 'num_latents' in datadict:
+                self.latents._init(datadict['num_latents'], False)
+
+        # only show most recent latents
         latents = [d['latent_t'] for d in new_data if 'latent_t' in d]
         if len(latents) and self.latents.is_init:
             self.latents.set_latents(values=latents[-1])
@@ -1468,15 +1584,6 @@ def main(
     else:
         sender = None
 
-    # get remote model sources
-    repos = repo.split(',') if repo is not None else []
-    remote_models_info = list(get_remote_model_info(repos))
-    print(f'{remote_models_info=}')
-
-    # get local model sources
-    model_dirs = model_dir.split(',') if model_dir is not None else []
-    local_models_info = list(get_local_model_info(model_dirs))
-
     if no_backend:
         backend = None
     else:
@@ -1503,6 +1610,14 @@ def main(
         stress_gui=stress_gui,
         text=text,
         sampler_text=sampler_text,
+        synth_audio=synth_audio,
+        audio_out=audio_out,
+        vocoder=vocoder,
+        tts=tts,
+        repo=repo,
+        model_dir=model_dir,
+        initial_tts=initial_tts,
+        initial_vocoder=initial_vocoder
         )
 
     available_geometry = win.screen().availableGeometry()
@@ -1511,75 +1626,6 @@ def main(
     win.show()
 
     print("GUI ready")
-
-    ### TODO move below into MainWindow instead of main
-    manual_models_info = []
-    if tts is not None:
-        manual_models_info.append(ManuallyPairedModelInfo(tts, vocoder))
-    elif vocoder is not None:
-        # case where vocoder supplied but not tts
-        vocoder = Path(vocoder)
-        vocoder_info = LocalVocoderInfo(vocoder.stem, vocoder)
-        win.vocoder_selector.addItem(vocoder_info.name, vocoder_info)
-
-    for item in it.chain(
-            manual_models_info, local_models_info, remote_models_info):
-        win.model_selector.addItem(item.name, item)
-        voc_info = item.get_vocoder_info()
-        if voc_info is not None:
-            print(voc_info.name, voc_info.get_path())
-            win.vocoder_selector.addItem(voc_info.name, voc_info)
-        else:
-            print(f"no vococder info for {item.name}")
-
-    # audio device
-    device_list = sd.query_devices()
-    assert isinstance(device_list, sd.DeviceList)
-    out_devices = [
-        item for item in device_list if item.get('max_output_channels', 0)]
-    out_device_names = [item['name'] for item in out_devices]
-    out_device_indices = [item['index'] for item in out_devices]
-
-    if audio_out is None or audio_out == 'default':
-        # use default according to sounddevice
-        audio_out = sd.default.device[1]
-
-    if isinstance(audio_out, str) and audio_out.isdecimal():
-        # index is supplied
-        audio_out = int(audio_out)
-    
-    if isinstance(audio_out, int):
-        # get index *in menu* from index in devicelist
-        if audio_out in out_device_indices:
-            audio_out = out_device_indices.index(audio_out)
-        else:
-            print(f'warning: {audio_out=} not an output device')
-    elif audio_out in out_device_names:
-        # get index *in menu* from name is devicelist
-        audio_out = out_device_names.index(audio_out)
-    else:
-        print(f'warning: audio output "{audio_out}" not recognized')
-
-    for item in device_list:
-        if item.get('max_output_channels', 0):
-            # name = item.get('name', item.get('index'))
-            name = f"{item['index']}: '{item['name']}' (I/O {item['max_input_channels']}/{item['max_output_channels']}) (SR: {int(item['default_samplerate'])})"
-            win.audio_device_selector.addItem(name, item)
-        # print(item)
-    win.audio_device_selector.setCurrentIndex(audio_out)
-   
-    # TODO figure out how to replace initial triggering of set_model
-    # instead of adding a second one
-    if initial_tts is not None:
-        if win.model_selector.findText(initial_tts) >= 0:
-            win.model_selector.setCurrentText(initial_tts)
-        else:
-            print(f'warning: TTS model "{initial_tts}" not recognized')
-    if initial_vocoder is not None:
-        if win.model_selector.findText(initial_tts) >= 0:
-            win.vocoder_selector.setCurrentText(initial_vocoder)
-        else:
-            print(f'warning: vocoder "{initial_vocoder}" not recognized')
 
     sys.exit(app.exec())
 

@@ -121,8 +121,6 @@ class Backend:
         """
         Lightweight init which runs in the frontend process.
         Args:
-            checkpoint: path to tungnaa checkpoint file
-            rave_path: path to rave vocoder to use python sound
             audio_block: block size if using python audio
             synth_audio: if True, vocode in python and send stereo audio
             latent_audio: if True, pack latents into a mono audio channel
@@ -185,7 +183,9 @@ class Backend:
 
         self.use_pitch = None
 
-        # self.stepping = False # for stopping the step thread while changing model
+        self.needs_vocoder_replace = False
+        self.needs_model_replace = False
+
         # call this from both __init__ and run
         # torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -252,6 +252,7 @@ class Backend:
             audio_block=None, 
             audio_channels=None, 
             ):
+        print("======= set audio device ======")
         ### audio output:
         # make sounddevice stream
 
@@ -261,6 +262,7 @@ class Backend:
 
         # print(f'{audio_out=} {audio_block=} {audio_channels=} {buffer_frames=}')
         
+        print(f'{self.out_mode=}')
         if self.out_mode:
 
             if audio_channels is None:
@@ -436,6 +438,7 @@ class Backend:
         else:
             vocoder = None
             vocoder_sr = None
+            latent_size = None
         self.replace_vocoder = (vocoder, vocoder_sr, latent_size)
         self.needs_vocoder_replace = True
 

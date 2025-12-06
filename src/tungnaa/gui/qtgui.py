@@ -179,9 +179,13 @@ class DoubleSlider(QtWidgets.QSlider):
         super(DoubleSlider, self).setValue(int(value * self._multi))
 
 
-class PlotWidget(pg.PlotWidget):
+# class PlotWidget(pg.PlotWidget):
+class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
     # disable zoom
     def wheelEvent(self, ev):
+        pass
+
+    def mouseMoveEvent(self, ev):
         pass
 
 class AlignmentImageItem(pg.ImageItem):
@@ -211,12 +215,11 @@ class AlignmentGraph(QtWidgets.QWidget):
         self.frame = 0
         self.prev_tok = 0
 
-        self.plot_widget = pg.GraphicsLayoutWidget(self)
+        self.plot_widget = GraphicsLayoutWidget(self)
         self.plot_widget.ci.layout.setContentsMargins(0,0,0,4)
         self.plot_widget.ci.layout.setSpacing(0)
         self.plot = self.plot_widget.addPlot()
 
-        # self.plot = PlotWidget(parent=self)
         # See: https://pyqtgraph.readthedocs.io/en/latest/api_reference/graphicsItems/imageitem.html#pyqtgraph.ImageItem
         self.imageitem = AlignmentImageItem(image_clicked)
         # self.imageitem.setImage(image=self.imagedata.T)
@@ -1478,7 +1481,6 @@ def main(
         backend = None
     else:
         backend = Proxy(tungnaa.gui.backend.Backend(
-            # audio_out=audio_out,
             audio_block=audio_block,
             # audio_channels=audio_channels,
             synth_audio=synth_audio,
@@ -1510,6 +1512,7 @@ def main(
 
     print("GUI ready")
 
+    ### TODO move below into MainWindow instead of main
     manual_models_info = []
     if tts is not None:
         manual_models_info.append(ManuallyPairedModelInfo(tts, vocoder))
@@ -1519,7 +1522,6 @@ def main(
         vocoder_info = LocalVocoderInfo(vocoder.stem, vocoder)
         win.vocoder_selector.addItem(vocoder_info.name, vocoder_info)
 
-    ### TODO move into MainWindow instead of main
     for item in it.chain(
             manual_models_info, local_models_info, remote_models_info):
         win.model_selector.addItem(item.name, item)
@@ -1564,11 +1566,8 @@ def main(
             name = f"{item['index']}: '{item['name']}' (I/O {item['max_input_channels']}/{item['max_output_channels']}) (SR: {int(item['default_samplerate'])})"
             win.audio_device_selector.addItem(name, item)
         # print(item)
-
     win.audio_device_selector.setCurrentIndex(audio_out)
    
-    
-
     # TODO figure out how to replace initial triggering of set_model
     # instead of adding a second one
     if initial_tts is not None:

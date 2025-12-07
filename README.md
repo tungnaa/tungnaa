@@ -2,11 +2,13 @@
 
 Training and GUI inference for interactive artistic text-to-voice models.
 
+We would love to hear your feedback on using Tungnaá in this short survey: [https://forms.gle/F97yhJ1YB5aiZPmn7](https://forms.gle/F97yhJ1YB5aiZPmn7)
+
 # Installation
 
-`pip install tungnaa[gui]` (to use the instrument)
+`pip install tungnaa[gui]` (if you just want to use Tungnaá)
 
-`pip install tungnaa[train]` (if you are installing on a server to train models)
+`pip install tungnaa[train]` (if you want to train your own models)
 
 # Usage
 

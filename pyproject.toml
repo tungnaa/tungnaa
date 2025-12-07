@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "tungnaa"
-version = "0.1.2"
+version = "0.2.0"
 description = "tungnaa is a text-to-voice model family and musical instrument"
 authors = ["Victor Shepardson <victor.shepardson@gmail.com>", "Jonathan Chaim Reus <studio@jonathanreus.com>"]
 license = "modified GPLv3"

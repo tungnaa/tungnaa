@@ -5,11 +5,14 @@ import random
 import queue
 import functools as ft
 import threading
+import itertools as it
+from typing import List, Dict, Tuple, Any
 import numpy as np
 import numpy.typing as npt
 import typing
 from pathlib import Path
 from importlib import resources
+import traceback
 
 import fire
 from PySide6 import QtCore, QtWidgets, QtGui, QtCharts
@@ -18,7 +21,11 @@ import pythonosc
 import pythonosc.osc_server
 
 import tungnaa.gui
-from tungnaa.gui.downloads import dl_model
+from tungnaa.gui.downloads import get_remote_model_info, get_local_model_info, ManuallyPairedModelInfo, LocalVocoderInfo
+
+# need this to get the list of devices -- could send it from the backend but
+# no need to overcomplicate for now...
+import sounddevice as sd
 
 # multiprocessing: need to use spawn (no fork on mac, no forkserver on windows)
 # note, this may preclude pyinstaller...
@@ -75,6 +82,7 @@ class Proxy:
                 # if self.parent_conn.poll():
                 try:
                     assert self.parent_conn.recv()
+                    print("""backend started""")
                 except AssertionError:
                     print("""backend process failed to start""")
                     raise
@@ -86,7 +94,7 @@ class Proxy:
             if callable(attr):
                 # return a function which when called, defers onto the backend process
                 def f(*a, **kw):
-                    # print(name)
+                    # print([name, a, kw])
                     self.parent_conn.send([name, a, kw])
                 return f
             else:
@@ -98,6 +106,11 @@ class Proxy:
             raise AttributeError
     
     def _run(self, conn):
+        """
+        this method is run in the child process.
+        first thing sent over the pipe (back to the parent) is True.
+        then loop to handle method calls received over the pipe.
+        """
         print('======================BACKEND RUN======================')
         self.obj.run(conn)
         self.running = True
@@ -110,13 +123,17 @@ class Proxy:
             getattr(self.obj, name)(*a, **kw)
 
 
-# save some boilerplate
-def Layout(*items, cls=QtWidgets.QHBoxLayout, spacing=None, margins=None):
+# save some Qt boilerplate
+def Layout(*items, cls:type=QtWidgets.QHBoxLayout, spacing=None, margins=None, stretch=None):
     l = cls()
     if spacing is not None:
         l.setSpacing(spacing)
     if margins is not None:
         l.setContentsMargins(*margins)
+    if stretch is not None:
+        raise NotImplementedError
+        # for k,v in stretch.items():
+            # l.setStretch(k,v)
     for item in items:
         if isinstance(item, QtWidgets.QWidget):
             l.addWidget(item)
@@ -162,9 +179,13 @@ class DoubleSlider(QtWidgets.QSlider):
         super(DoubleSlider, self).setValue(int(value * self._multi))
 
 
-class PlotWidget(pg.PlotWidget):
+# class PlotWidget(pg.PlotWidget):
+class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
     # disable zoom
     def wheelEvent(self, ev):
+        pass
+
+    def mouseMoveEvent(self, ev):
         pass
 
 class AlignmentImageItem(pg.ImageItem):
@@ -194,17 +215,16 @@ class AlignmentGraph(QtWidgets.QWidget):
         self.frame = 0
         self.prev_tok = 0
 
-        self.plot_widget = pg.GraphicsLayoutWidget(self)
-        self.plot_widget.ci.layout.setContentsMargins(0,0,0,4)
+        self.plot_widget = GraphicsLayoutWidget(self)
+        self.plot_widget.ci.layout.setContentsMargins(0,0,0,0)
         self.plot_widget.ci.layout.setSpacing(0)
         self.plot = self.plot_widget.addPlot()
 
-        # self.plot = PlotWidget(parent=self)
         # See: https://pyqtgraph.readthedocs.io/en/latest/api_reference/graphicsItems/imageitem.html#pyqtgraph.ImageItem
         self.imageitem = AlignmentImageItem(image_clicked)
         # self.imageitem.setImage(image=self.imagedata.T)
         self.plot.addItem(self.imageitem)
-        self.plot.showAxes(True, showValues=(True, True, True, False))
+        self.plot.showAxes(True, showValues=(False, True, False, False))
         self.plot.invertY(False) # vertical axis zero at the bottom
         # no idea why, but fully transparent background is too light
         # black with alpha of 40 seems to match
@@ -251,7 +271,7 @@ class AlignmentGraph(QtWidgets.QWidget):
         else:
             print(f"Error: token index {tok} out of range (0-{self.num_encodings-1})")
 
-    def get_slidervalue_as_params(self) -> np.ndarray:
+    def get_slidervalue_as_params(self) -> Tuple[float, float]:
         """slider value to attention parameters"""
         tok = self.alignment_slider.value() / self.attn_slider_resolution 
 
@@ -308,16 +328,35 @@ class AlignmentGraph(QtWidgets.QWidget):
         self.imageitem.update()
         #self.plot.update()
         
+def clearLayout(layout: QtWidgets.QLayout):
+    """
+    from gemini
+    Safely clears a QLayout and deletes all associated widgets.
+    """
+    if layout is not None:
+        # Loop backwards to safely remove items while iterating
+        while layout.count():
+            item = layout.takeAt(0)
+            
+            # If the item is a widget, call deleteLater()
+            if item.widget() is not None:
+                item.widget().deleteLater()
+            
+            # If the item is a nested layout, recursively clear it
+            elif item.layout() is not None:
+                clearLayout(item.layout())
 
 class RaveLatents(QtWidgets.QWidget):
     def __init__(self, parent:QtWidgets.QWidget=None):
         super().__init__(parent)
 
-        self.latents = list()
         self.layout = QtWidgets.QHBoxLayout(self)
         self.is_init = False
 
     def _init(self, num_latents, pitch_slider):
+        self.latents = list()
+        clearLayout(self.layout)
+
         for idx in range(num_latents):
             if idx==0 and pitch_slider:
                 bmin, bmax = -100., 100.
@@ -333,7 +372,8 @@ class RaveLatents(QtWidgets.QWidget):
             bias_slider.setMinimum(bmin)
             bias_slider.setValue(0.0)
             bias_slider.doubleValueChanged.connect(
-                lambda val,latent=idx: self._bias_adjust(val, latent))
+                # lambda val,latent=idx: self._bias_adjust(val, latent))
+                ft.partial(self._bias_adjust, latent=idx))
             bias_slider.setStatusTip(f"bias latent dimension {idx}")
             
             value_meter = DoubleSlider(decimals=3, parent=self)
@@ -403,7 +443,7 @@ class RaveLatents(QtWidgets.QWidget):
         for bias,_ in self.latents:
             bias.setValue(value);
 
-    def set_latents(self, values:typing.Union[list, npt.ArrayLike]):
+    def set_latents(self, values):
         """
         Set latent values in the gui. 
         values > the number of sliders are ignored
@@ -744,7 +784,8 @@ class OSCController(threading.Thread):
         if self.osc_server is not None:
             self.unserve_osc()
 
-        self.osc_server = pythonosc.osc_server.ThreadingOSCUDPServer(address, self.osc_dispatcher)
+        self.osc_server = pythonosc.osc_server.ThreadingOSCUDPServer(
+            address, self.osc_dispatcher)
         self.daemon = True
         #self.osc_server_thread = threading.Thread(target=run_osc_server, args=(self,), daemon=True)
         self.start()
@@ -785,7 +826,16 @@ class MainWindow(QtWidgets.QMainWindow):
         stress_gui=None,
         text=None,
         sampler_text=None,
+        tts:Path=None,
+        vocoder:Path=None,
+        initial_tts:str=None,
+        initial_vocoder:str=None,
+        repo:str=None,
+        model_dir:Path=None,
+        audio_out:str|int=None,
+        synth_audio:bool=True
         ):
+        print("MainWindow.__init__")
         super().__init__(parent)
         self.version= f"Alpha v{tungnaa.__version__}"
         self.appname= f"T̴u̮n̵g̴na͠á {self.version}"
@@ -796,6 +846,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setUnifiedTitleAndToolBarOnMac(True)
 
         self.mode = 'infer'
+        self.synth_audio = synth_audio
         
         self.update_fps = update_fps
         self.osc_listen_addr = osc_listen_addr
@@ -819,7 +870,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # BUILD GUI
         # ---------------------------------------------------------------------
         #self.setWindowTitle(QtCore.QCoreApplication.applicationName())
-        
+   
         self.setWindowTitle(self.appname)
         self.main = QtWidgets.QWidget(self)
         # self.main.setStyleSheet("color: grey; background-color: black")
@@ -879,6 +930,102 @@ class MainWindow(QtWidgets.QMainWindow):
         self.toolbar_combined.setLayout(controls_layout)
         self.addToolBar(self.toolbar_top) # Toolbar gets added to VLayout below
 
+        self.model_selector = QtWidgets.QComboBox()
+        self.vocoder_selector = QtWidgets.QComboBox()
+
+        # get remote model sources
+        repos = repo.split(',') if repo is not None else []
+        remote_models_info = list(get_remote_model_info(repos))
+        print(f'{remote_models_info=}')
+
+        # get local model sources
+        model_dirs = model_dir.split(',') if model_dir is not None else []
+        local_models_info = list(get_local_model_info(model_dirs))
+
+        manual_models_info = []
+        if tts is not None:
+            manual_models_info.append(ManuallyPairedModelInfo(tts, vocoder))
+        elif vocoder is not None:
+            # case where vocoder supplied but not tts
+            vocoder = Path(vocoder)
+            vocoder_info = LocalVocoderInfo(vocoder.stem, vocoder)
+            self.vocoder_selector.addItem(vocoder_info.name, vocoder_info)
+
+        for item in it.chain(
+                manual_models_info, local_models_info, remote_models_info):
+            self.model_selector.addItem(item.name, item)
+            voc_info = item.get_vocoder_info()
+            if voc_info is not None:
+                print(voc_info.name, voc_info.get_path())
+                self.vocoder_selector.addItem(voc_info.name, voc_info)
+            else:
+                print(f"no vocoder info for {item.name}")
+
+        if initial_tts is not None:
+            if self.model_selector.findText(initial_tts) >= 0:
+                self.model_selector.setCurrentText(initial_tts)
+            else:
+                print(f'warning: TTS model "{initial_tts}" not recognized')
+        self.model_selector.currentTextChanged.connect(self.model_changed)
+        self.model_selector.setMinimumWidth(200)
+        self.model_selector_area = HBoxLayout(
+            QtWidgets.QLabel("model:"), self.model_selector, 
+            spacing=0, margins=(12,0,12,0))
+        
+        if initial_vocoder is not None:
+            if self.vocoder_selector.findText(initial_vocoder) >= 0:
+                self.vocoder_selector.setCurrentText(initial_vocoder)
+            else:
+                print(f'warning: vocoder "{initial_vocoder}" not recognized')
+        self.vocoder_selector.currentTextChanged.connect(self.vocoder_changed)
+        self.vocoder_selector.setMinimumWidth(100)
+        self.vocoder_selector_area = HBoxLayout(
+            QtWidgets.QLabel("vocoder:"), self.vocoder_selector,
+            spacing=0, margins=(12,0,12,0))
+        self.vocoder_selector.setEnabled(self.synth_audio)
+
+        self.audio_device_selector = QtWidgets.QComboBox()
+         # audio device
+        device_list = sd.query_devices()
+        assert isinstance(device_list, sd.DeviceList)
+        out_devices = [
+            item for item in device_list if item.get('max_output_channels', 0)]
+        out_device_names = [item['name'] for item in out_devices]
+        out_device_indices = [item['index'] for item in out_devices]
+
+        if audio_out is None or audio_out == 'default':
+            # use default according to sounddevice
+            audio_out = sd.default.device[1]
+
+        if isinstance(audio_out, str) and audio_out.isdecimal():
+            # index is supplied
+            audio_out = int(audio_out)
+        
+        if isinstance(audio_out, int):
+            # get index *in menu* from index in devicelist
+            if audio_out in out_device_indices:
+                audio_out = out_device_indices.index(audio_out)
+            else:
+                print(f'warning: {audio_out=} not an output device')
+        elif audio_out in out_device_names:
+            # get index *in menu* from name is devicelist
+            audio_out = out_device_names.index(audio_out)
+        else:
+            print(f'warning: audio output "{audio_out}" not recognized')
+
+        for item in device_list:
+            if item.get('max_output_channels', 0):
+                # name = item.get('name', item.get('index'))
+                name = f"{item['index']}: '{item['name']}' (I/O {item['max_input_channels']}/{item['max_output_channels']}) (SR: {int(item['default_samplerate'])})"
+                self.audio_device_selector.addItem(name, item)
+            # print(item)
+        self.audio_device_selector.setCurrentIndex(audio_out)
+        self.audio_device_selector.currentTextChanged.connect(
+            self.audio_device_changed)
+        self.audio_device_selector.setMinimumWidth(100)
+        self.audio_device_selector_area = HBoxLayout(
+            QtWidgets.QLabel("audio device:"), self.audio_device_selector, spacing=0, margins=(12,0,12,0))
+
         self._generate_action = QtGui.QAction("Generate", self)
         self._generate_action.setStatusTip("Start autoregression")
         self._generate_action.triggered.connect(self.play_generate)
@@ -928,7 +1075,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._model_info_action.triggered.connect(self.open_model_info)
         self.model_info_dialog = ModelInfoDialog(context=self)
 
-        self.temperature_slider = DoubleSlider(orientation=QtCore.Qt.Horizontal, decimals=3, parent=self)
+        self.temperature_slider = DoubleSlider(
+            orientation=QtCore.Qt.Horizontal, decimals=3, parent=self)
         self.temperature_slider.setMaximum(2.0)
         self.temperature_slider.setMinimum(0.0)
         self.temperature_slider.setValue(1)
@@ -1010,8 +1158,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabwidget.addTab(self.generator_widget, "Generator")
         self.tabwidget.addTab(self.sampler_widget, "Sampler")        
 
-
-
         # StatusBar
         self.statusbar = QtWidgets.QStatusBar(self.main)
         self.setStatusBar(self.statusbar)
@@ -1019,8 +1165,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.latents = RaveLatents(self.main)
         self.setToolButtonStyle(QtCore.Qt.ToolButtonFollowStyle)
 
+        selectors = HBoxLayout(self.model_selector_area, self.vocoder_selector_area, self.audio_device_selector_area)
 
         self._main_layout = VBoxLayout(
+            selectors,
             self.toolbar_combined,
             self.tabwidget,
             self.latents,
@@ -1046,7 +1194,39 @@ class MainWindow(QtWidgets.QMainWindow):
         self.gui_update_timer.start((1.0 / self.update_fps) * 1000)
 
         self._generate_stop_at_end_toggle_action.setChecked(False) # make the default to babble like a river
-        self._sampler_stop_at_end_toggle_action.setChecked(True)
+        self._sampler_stop_at_end_toggle_action.setChecked(True) 
+
+        self.audio_device_changed()
+        self.model_changed()
+        if synth_audio:
+            self.vocoder_changed()
+       
+
+    def model_changed(self):
+        """handler for model selection"""
+        model_info = self.model_selector.currentData()
+        # d,path,vocoder_path,md = (self.model_selector.currentData())
+        if self.backend is not None and self.use_backend:
+            self.backend.set_tts_model(model_info.get_tts_path())
+            vocoder_info = model_info.get_vocoder_info()
+            # TODO add control to link/unlink vocoder
+            if vocoder_info is not None:
+                # TODO this could be a problem if there are identical names
+                self.vocoder_selector.setCurrentText(vocoder_info.name)
+        self.set_metadata(model_info.name, model_info.get_markdown())
+
+    def vocoder_changed(self):
+        """handler for vocoder selection"""
+        voc_info = self.vocoder_selector.currentData()
+        if self.backend is not None and self.use_backend and self.synth_audio:
+            self.backend.set_vocoder(voc_info.get_path())
+
+    def audio_device_changed(self):
+        """handler for audio device selection"""
+        device = self.audio_device_selector.currentData()
+        print(f'setting audio {device=}')
+        if self.backend and self.use_backend:
+            self.backend.set_audio_device(audio_out=device['index'])
 
     def set_metadata(self, name, meta):
         if name is not None:
@@ -1060,9 +1240,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def image_clicked(self, ev):
         # print(ev.pos)
-        self.backend.set_momentary_alignment((ev.pos().x(), 1))
-        self.backend.set_state_by_step(int(ev.pos().y()))
-        self.backend.generate()
+        if self.backend is not None and self.use_backend:
+            self.backend.set_momentary_alignment((ev.pos().x(), 1))
+            self.backend.set_state_by_step(int(ev.pos().y()))
+            self.backend.generate()
         # self.backend.set_momentary_alignment(
         #     self.attention_graph.get_slidervalue_as_params())
 
@@ -1074,7 +1255,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.frame += 1
         new_data = list()
         # empty message queue, update attention graph & RAVE latents
-        if self.use_backend: 
+        if self.backend is not None and self.use_backend:
 
             if self.stress_gui is not None:
                 t = time.time_ns()
@@ -1092,21 +1273,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 else:
                     raise ValueError(f"Unknown attention mode: {self.mode} - must be <infer|paint>")
 
-                # for _ in range(self.backend.frontend_q.qsize()):
+                # grab everything from backend pipe
                 while self.backend.parent_conn.poll():
                     try:
-                        # framedict = self.backend.frontend_q.get_nowait()
                         framedict = self.backend.parent_conn.recv()
-                        if not self.latents.is_init and 'num_latents' in framedict and 'use_pitch' in framedict:
-                            self.latents._init(
-                                framedict['num_latents'], framedict['use_pitch'])
-
                         new_data.append(framedict)
                     except queue.Empty as ex:
                         break
-            except Exception as e:
-                print(e)
-                exit(0) ### debug
+            except Exception:
+                traceback.print_exc()
+                # exit(0) ### debug
             
         else: # Do not use backend, instead generate random data.. useful for testing the gui (maybe?)
             new_attn_frame = np.zeros((1,self.attention_graph.num_encodings), dtype=np.float32)        
@@ -1133,15 +1309,23 @@ class MainWindow(QtWidgets.QMainWindow):
             new_data.append({
                 'latent_t': new_latent_frame, 'align_t': new_attn_frame})
             
-        # iterate through new_data and update the gui
+        # iterate through data from backend and update the gui
         for datadict in new_data:
+            # reset after text processing
             if datadict.get('reset', False):
-                # self.finish_reset(num_tokens=datadict['align_t'].shape[-1])
                 self.finish_reset(text=datadict['text'])
+            # plot alignments
             if 'align_t' in datadict and not datadict.get('sampler', False):
                 self.attention_graph.addFrame(
                     datadict['align_t'], datadict['text'])
-        
+            # configure vocoder controls
+            # TODO: handle use_pitch
+            if self.synth_audio and 'vocoder_num_latents' in datadict:
+                self.latents._init(datadict['vocoder_num_latents'], False)
+            if not self.synth_audio and 'num_latents' in datadict:
+                self.latents._init(datadict['num_latents'], False)
+
+        # only show most recent latents
         latents = [d['latent_t'] for d in new_data if 'latent_t' in d]
         if len(latents) and self.latents.is_init:
             self.latents.set_latents(values=latents[-1])
@@ -1159,7 +1343,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         # TODO: cleanup OSC/networking connections
         print(f"Application Close {e}")
-        self.backend.cleanup()
+        if self.backend is not None and self.use_backend:
+            self.backend.cleanup()
         e.accept()
         #e.ignore() # Under some conditions ignore app close?
 
@@ -1183,19 +1368,20 @@ class MainWindow(QtWidgets.QMainWindow):
             txtval = self.gen_text_input.toPlainText()
             print(f"Encoding: {txtval}")
             self.text_encoding_status.setText("ʭʬʭʬʭʬʭʬʭʬʭʬʭʬʭʬʭ encoding.... ʬʭʬʭʬʭʬʭʬʭʬʭʬʭʬʭʬʭ")
-            # this returns the text with start/end tokens added and loop points stripped
-            self.backend.set_text(text=txtval)
+            if self.backend is not None and self.use_backend:
+                self.backend.set_text(text=txtval)
         else:
             print("No backend enabled to encode text: ignoring...")
 
     def sampler_step(self, step:int, autoplay:bool) -> None:
-        self.backend.set_sampler_step(step)
-        if autoplay:
-            # TODO: Once sampler mode is a toggle rather than a trigger, need to implement something like this to put the GUI in sampler mode...
-            # if gui not_in_sampler_mode                
-            #     self._sampler_action.toggle(True)
-            # else:
-            self.backend.sampler()
+        if self.backend is not None and self.use_backend:
+            self.backend.set_sampler_step(step)
+            if autoplay:
+                # TODO: Once sampler mode is a toggle rather than a trigger, need to implement something like this to put the GUI in sampler mode...
+                # if gui not_in_sampler_mode                
+                #     self._sampler_action.toggle(True)
+                # else:
+                self.backend.sampler()
 
     def loop_text(self, **kw):
         """
@@ -1206,7 +1392,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if 'text' not in kw:
             kw['text'] = self.samp_text_input.toPlainText()
-        self.backend.set_sampler_loop_text(**kw)
+        if self.backend is not None and self.use_backend:
+            self.backend.set_sampler_loop_text(**kw)
 
     def loop_index(self, **kw):
         """
@@ -1215,7 +1402,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.use_backend:
             print("No backend enabled to loop indices: ignoring...")
             return
-        self.backend.set_sampler_loop_index(**kw)
+        if self.backend is not None and self.use_backend:
+            self.backend.set_sampler_loop_index(**kw)
 
     def play_generate(self, val:bool):
         print(f"Play autoregressive frame generator")
@@ -1224,20 +1412,24 @@ class MainWindow(QtWidgets.QMainWindow):
             # self.encode_text()
         if self.attention_graph.text is None:
             self.encode_text()
-        self.backend.generate()
+        if self.backend is not None and self.use_backend:
+            self.backend.generate()
 
     def play_sampler(self, val:bool):
         print(f"Play sampler")
-        self.backend.sampler()
+        if self.backend is not None and self.use_backend:
+            self.backend.sampler()
 
     def pause(self, val:bool):
         print(f"Pause generation or sampler")
-        self.backend.pause()
+        if self.backend is not None and self.use_backend:
+            self.backend.pause()
 
     def reset_autoregression(self, val:bool):
         print(f"Reset autoregression history")
         # self.attention_graph.reset()
-        self.backend.reset()
+        if self.backend is not None and self.use_backend:
+            self.backend.reset()
 
     def set_temperature(self, temp:float) -> None:
         """
@@ -1251,7 +1443,8 @@ class MainWindow(QtWidgets.QMainWindow):
         elif temp < 0:
             temp=0
         self.temperature_slider.setValue(temp)
-        self.backend.set_temperature(temp)
+        if self.backend is not None and self.use_backend:
+            self.backend.set_temperature(temp)
 
     def add_temperature(self, temp:float) -> None:
         """
@@ -1270,15 +1463,18 @@ class MainWindow(QtWidgets.QMainWindow):
         print(f"Alignment Mode Changed To:{self.mode}")
 
     def toggle_latent_feedback(self, toggle:bool):
-        self.backend.set_latent_feedback(toggle)
+        if self.backend is not None and self.use_backend:
+            self.backend.set_latent_feedback(toggle)
         print(f"Latent Feedback status changed to:{toggle}")
 
     def toggle_generate_stop_at_end(self, toggle:bool):
-        self.backend.set_generate_stop_at_end(toggle)
+        if self.backend is not None and self.use_backend:
+            self.backend.set_generate_stop_at_end(toggle)
         print(f"Stop Generate At End status changed to:{toggle}")
 
     def toggle_sampler_stop_at_end(self, toggle:bool):
-        self.backend.set_sampler_stop_at_end(toggle)
+        if self.backend is not None and self.use_backend:
+            self.backend.set_sampler_stop_at_end(toggle)
         print(f"Stop Sampler At End status changed to:{toggle}")
 
     def set_alignment_mode(self, mode:str='infer') -> None:
@@ -1308,9 +1504,12 @@ class MainWindow(QtWidgets.QMainWindow):
 # Main entry point for Fire
 def main(
     # models
-    tts:Path='tungnaa_119_vctk',
+    tts:Path=None,
     vocoder:Path=None,
-    repo='Intelligent-Instruments-Lab/tungnaa-models-public',
+    initial_tts:str='tungnaa_119_vctk',
+    initial_vocoder:str=None,
+    repo:str='Intelligent-Instruments-Lab/tungnaa-models-public',
+    model_dir:Path=None,
     # output modes
     synth_audio:bool=True,
     latent_audio:bool=False,
@@ -1335,9 +1534,12 @@ def main(
     """Tungnaa Text to Voice
     
     Args:
-        tts: path to TTS model, or name of model in repo
+        tts: path to TTS model
         vocoder: path to vocoder model
+        initial_tts: name of initial TTS model from repo or model_dir sources
+        initial_vocoder: name of initial vocoder model from repo or model_dir sources
         repo: huggingface repo to search for models
+        model_dir: local directory to search for models
 
         synth_audio: send stereo audio from Python
         latent_audio: pack latents into a mono audio signal, 
@@ -1360,15 +1562,6 @@ def main(
         stress_gui: for testing, add this many seconds delay in `update`
         
     """
-
-    if audio_out == 'default':
-        audio_out = None
-    if audio_out is not None:
-        if isinstance(audio_out, str) and audio_out.isdecimal():
-            audio_out = int(audio_out)
-        elif not isinstance(audio_out, int):
-            raise TypeError(f"Invalid audio device id '{audio_out}', must be either an integer or 'default'")
-
     app = QtWidgets.QApplication(sys.argv)
     QtCore.QCoreApplication.setOrganizationName("Intelligent Instruments Lab")
     QtCore.QCoreApplication.setApplicationName("Tungnaa")
@@ -1394,40 +1587,40 @@ def main(
     else:
         sender = None
 
-    # if tts is not a local file, download model from repo
-    # also sets the vocoder unless it it explicitly set to something else
-    model_name, model_meta = None, None
-    try:
-        with open(tts): pass
-    except FileNotFoundError:
-        print(f'searching remote repo for model "{tts}"...')
-        tts, vocoder, model_name, model_meta = dl_model(repo, tts, vocoder)
-
-    backend = tungnaa.gui.backend.Backend(
-        checkpoint=tts, 
-        rave_path=vocoder,
-        audio_out=audio_out,
-        audio_block=audio_block,
-        # audio_channels=audio_channels,
-        synth_audio=synth_audio,
-        latent_audio=latent_audio,
-        latent_osc=latent_osc,
-        osc_sender=sender,
-        buffer_frames=buffer_frames,
-        jit=jit,
-        profile=profile,
-        )
+    if no_backend:
+        backend = None
+    else:
+        backend = Proxy(tungnaa.gui.backend.Backend(
+            audio_block=audio_block,
+            # audio_channels=audio_channels,
+            synth_audio=synth_audio,
+            latent_audio=latent_audio,
+            latent_osc=latent_osc,
+            osc_sender=sender,
+            buffer_frames=buffer_frames,
+            jit=jit,
+            profile=profile,
+            ))
     
     osc_host, osc_port = osc_in_addr.split(':')
     osc_port = int(osc_port)
+    print("creating main window...")
     win = MainWindow(
         use_backend=(not no_backend), 
         sender=sender,
-        backend=Proxy(backend),
+        backend=backend,
         osc_listen_addr=(osc_host, osc_port),
         stress_gui=stress_gui,
         text=text,
         sampler_text=sampler_text,
+        synth_audio=synth_audio,
+        audio_out=audio_out,
+        vocoder=vocoder,
+        tts=tts,
+        repo=repo,
+        model_dir=model_dir,
+        initial_tts=initial_tts,
+        initial_vocoder=initial_vocoder
         )
 
     available_geometry = win.screen().availableGeometry()
@@ -1435,9 +1628,7 @@ def main(
     win.move((available_geometry.width() - win.width()), 0)
     win.show()
 
-    win.set_metadata(model_name, model_meta)
-
-    # backend.start_stream()
+    print("GUI ready")
 
     sys.exit(app.exec())
 

@@ -7,6 +7,8 @@ from torch.nn import functional as F
 
 from transformers import AutoModel, AutoConfig, CanineModel
 
+import joblib
+
 def tokenize(text:str, end_tokens:Tuple[int,int]|None):
     """
     Returns:
@@ -59,6 +61,10 @@ class ZeroEncoder(nn.Module):
         # NOTE: stupid hack to support arbitrary number of embeddings
         return self.embed(x%self.n_embeddings)
 
+# cache = joblib...
+# def get_hf_config(name):
+#     return AutoConfig.from_pretrained(pretrained)
+
 class CanineEncoder(nn.Module):
     def __init__(self, 
             pretrained='google/canine-c', 
@@ -67,8 +73,10 @@ class CanineEncoder(nn.Module):
         # canine-s: pre-trained with subword masking loss
         super().__init__()
         self.end_tokens = [57344, 57345] if end_tokens else None
+        # TODO: I think this is causing slow startup when no internet
+        # it waits for a timeout before using the cached config?
         # self.net = CanineModel.from_pretrained(pretrained)
-        config = AutoConfig.from_pretrained(pretrained)
+        config = AutoConfig.from_pretrained(pretrained, force_download=False)
         self.net = AutoModel.from_config(config)
 
         self.channels = 768

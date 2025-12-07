@@ -967,6 +967,7 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 print(f'warning: TTS model "{initial_tts}" not recognized')
         self.model_selector.currentTextChanged.connect(self.model_changed)
+        self.model_selector.setMinimumWidth(200)
         self.model_selector_area = HBoxLayout(
             QtWidgets.QLabel("model:"), self.model_selector, 
             spacing=0, margins=(12,0,12,0))
@@ -977,6 +978,7 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 print(f'warning: vocoder "{initial_vocoder}" not recognized')
         self.vocoder_selector.currentTextChanged.connect(self.vocoder_changed)
+        self.vocoder_selector.setMinimumWidth(100)
         self.vocoder_selector_area = HBoxLayout(
             QtWidgets.QLabel("vocoder:"), self.vocoder_selector,
             spacing=0, margins=(12,0,12,0))
@@ -1020,6 +1022,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.audio_device_selector.setCurrentIndex(audio_out)
         self.audio_device_selector.currentTextChanged.connect(
             self.audio_device_changed)
+        self.audio_device_selector.setMinimumWidth(100)
         self.audio_device_selector_area = HBoxLayout(
             QtWidgets.QLabel("audio device:"), self.audio_device_selector, spacing=0, margins=(12,0,12,0))
 

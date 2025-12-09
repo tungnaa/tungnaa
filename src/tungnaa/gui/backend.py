@@ -284,7 +284,7 @@ class Backend:
             print(f'{audio_channels=}')
 
             devicelist = sd.query_devices()
-            assert isinstance(devicelist, sd.DeviceList)
+            assert isinstance(devicelist, sd.DeviceList) # typing
             
             audio_device = None
             for dev in devicelist:
@@ -341,10 +341,8 @@ class Backend:
                 print('starting new stream')
                 self.stream.start()
             
-            if self.vocoder_sr:
-                assert self.stream.samplerate == self.vocoder_sr, f"""
-                failed to set sample rate to {self.vocoder_sr} from sounddevice
-                """
+            if self.vocoder_sr and self.stream.samplerate != self.vocoder_sr:
+                print(f"warning: failed to set sample rate to {self.vocoder_sr} from sounddevice")
 
             self.audio_out = audio_out
             self.audio_block = audio_block

@@ -634,6 +634,11 @@ class OSCController(threading.Thread):
             """
             self.context.set_alignment_mode(mode)
 
+        def osc_toggle_paint(addr:str) -> None:
+            """Toggle painting alignment mode (Generator only)
+            """
+            self.context.toggle_paint()
+
         def osc_latent_feedback(addr:str, enable:bool) -> None:
             """Enable/disable latent feedback mode(Generator only)
             enable     bool true or false
@@ -778,6 +783,7 @@ class OSCController(threading.Thread):
 
         self.osc_dispatcher.map("/generate_stop_at_end", osc_generate_stop_at_end)
         self.osc_dispatcher.map("/alignment_mode", osc_alignment_mode)
+        self.osc_dispatcher.map("/toggle_paint", osc_toggle_paint)
         self.osc_dispatcher.map("/latent_feedback", osc_latent_feedback)
         self.osc_dispatcher.map("/set_gen_text", osc_set_gen_text)
         self.osc_dispatcher.map("/set_token", osc_set_alignment_as_token_idx)
@@ -881,7 +887,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if sys.platform == 'darwin':
             self.setUnifiedTitleAndToolBarOnMac(True)
 
-        self.mode = 'infer'
+        self.mode = self.last_nonpaint_mode = 'infer'
         self.synth_audio = synth_audio
         
         self.update_fps = update_fps
@@ -1516,9 +1522,18 @@ class MainWindow(QtWidgets.QMainWindow):
         Set alignment mode directly (used by OSC/MIDI)
         """
         if mode in ['infer', 'paint']:
+            if mode!='paint':
+                self.last_nonpaint_mode = mode
             self.mode = mode
             self._alignment_paint_toggle_action.setChecked((mode == 'paint'))
             print(f"Alignment Mode changed to: {mode}")
+
+    def toggle_paint(self) -> None:
+        if self.mode == 'paint':
+            mode = self.last_nonpaint_mode
+        else:
+            mode = 'paint'
+        self.set_alignment_mode(mode)
 
     def open_settings(self):
         if self.settings_dialog is None:

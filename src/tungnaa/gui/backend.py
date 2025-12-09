@@ -20,6 +20,7 @@ from enum import Enum, Flag
 import re
 from collections import defaultdict
 import cProfile, pstats, io
+import traceback
 
 # import threading, os
 from threading import Thread, RLock
@@ -648,14 +649,30 @@ class Backend:
 
     def set_alignment(self, 
             align_params:Optional[Tuple[float, float]],
-            momentary:bool = False
+            momentary:bool = False,
+            add:bool = False,
         ) -> None:
         """
-        Send alignment parameters to the backend. If None is passed, alignment painting is off.
+        Set alignment parameters from the frontend. 
+        If None is passed, alignment painting is off.
 
         Args:
             align_params: [loc, scale] or None
+            momentary: if True, set for only the next inference step
+            add: if True, increment location instead of setting
         """
+        if align_params is None: 
+            self.align_params = align_params
+            return
+        
+        loc, scale = align_params
+        if add:
+            try:
+                loc = loc + self.states[-1][-1]['align_hard']['index']
+            except Exception:
+                traceback.print_exc()
+        align_params = loc, scale
+
         if momentary:
             self.momentary_align_params = align_params
         else:
@@ -983,6 +1000,7 @@ class Backend:
     def paint_alignment(self):
         """helper for `step_gen`"""
         align_params = self.momentary_align_params or self.align_params
+        # print(f'{align_params=}')
         self.momentary_align_params = None
         if align_params is None:
             return None

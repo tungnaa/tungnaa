@@ -27,6 +27,11 @@ from tungnaa.gui.downloads import get_remote_model_info, get_local_model_info, M
 # no need to overcomplicate for now...
 import sounddevice as sd
 
+def partial_doc(f, **kw):
+    fw = ft.partial(f, **kw)
+    fw.__doc__ = f.__doc__
+    return fw
+
 # multiprocessing: need to use spawn (no fork on mac, no forkserver on windows)
 # note, this may preclude pyinstaller...
 
@@ -246,15 +251,17 @@ class AlignmentGraph(QtWidgets.QWidget):
         self.text = None
 
 
-    def set_normalized_alignment(self, value:float):
+    def set_normalized_alignment(self, value:float, add:bool=False):
         """
         Sets alignment slider to a normalized position from 0-1
         """
         slider_val = int(value*self.attn_slider_max_value)
+        if add:
+            slider_val = slider_val + self.alignment_slider.value()
         self.alignment_slider.setValue(slider_val)
         print(f"Set normalized alignment {value} - as slider val: {slider_val}/{self.attn_slider_max_value}/{self.num_encodings} ")
 
-    def set_alignment_as_token_idx(self, tok:int) -> None:
+    def set_alignment_as_token_idx(self, tok:int, add:bool=False) -> None:
         """
         Set alignment slider to a position corresponding to a given token index
         between 0 and self.num_encodings-1
@@ -262,11 +269,13 @@ class AlignmentGraph(QtWidgets.QWidget):
         tok     the target token index (must be between 0 and self.num_tokens-1)
         """
 
-        if tok >= 0 and tok < self.num_encodings:
-            tok_as_sliderval = tok * self.attn_slider_resolution
-            self.alignment_slider.setValue(tok_as_sliderval)
-        else:
-            print(f"Error: token index {tok} out of range (0-{self.num_encodings-1})")
+        # if tok >= 0 and tok < self.num_encodings:
+        slider_val = tok * self.attn_slider_resolution
+        if add:
+            slider_val = slider_val + self.alignment_slider.value()
+        self.alignment_slider.setValue(slider_val)
+        # else:
+        #     print(f"Error: token index {tok} out of range (0-{self.num_encodings-1})")
 
     def get_slidervalue_as_params(self) -> Tuple[float, float]:
         """slider value to attention parameters"""
@@ -410,6 +419,8 @@ class RaveLatents(QtWidgets.QWidget):
         print(f"ADJUST BIAS of LATENT {latent} = {val}")
 
     def get_bias(self, latent:int) -> float:
+        if latent >= len(self.latents):
+            print(f'error: {latent=} out of range, ignoring')
         return self.latents[latent][0].value()
 
     def get_biases(self) -> typing.List[float]:
@@ -424,14 +435,16 @@ class RaveLatents(QtWidgets.QWidget):
         """
         Set a latent bias value in the GUI
         """
+        if latent >= len(self.latents):
+            print(f'error: {latent=} out of range, ignoring')
         self.latents[latent][0].setValue(value)
 
     def add_latent_bias(self, latent:int, value:float):
         """
         Add a small value to the current bias value of a latent in the GUI
         """
-        newval = self.latents[latent][0].value() + value;
-        self.latents[latent][0].setValue(newval)
+        newval = self.get_bias(latent) + value
+        self.set_latent_bias(latent, newval)
 
     def reset_latent_biases(self, value:float=0.0):
         """
@@ -645,32 +658,42 @@ class OSCController(threading.Thread):
                 self.context.btn_send_gen_text.click()
 
         def osc_set_alignment_as_token_idx(addr:str, 
-                tok_idx:int, momentary:bool=False) -> None:
+                tok_idx:int, momentary:bool=False, 
+                add:bool=False
+                ) -> None:
             """Set alignment of generator by token index (Generator Only)
-            token_idx           int index of token
-            momentary         bool if true, set the alignment momentarily, without setting the paint bar, even if attention painting mode is off.
+            token_idx   int index of token
+            momentary   bool if true, set the alignment momentarily, without setting the paint bar, even if attention painting mode is off.
+            add         bool if true, increment the alignment instead of setting
             """
             if momentary:
                 self.context.backend.set_alignment(
-                    (tok_idx, 1), momentary=True)
+                    (tok_idx, 1), momentary=True, add=add)
             else:
-                self.context.attention_graph.set_alignment_as_token_idx(tok_idx)
-            print(f"Set alignment to token {tok_idx} - forced paint?: {momentary}")
+                self.context.attention_graph.set_alignment_as_token_idx(
+                    tok_idx, add=add)
+            print(f"Set alignment to {tok_idx=}, {momentary=}")
 
         def osc_set_alignment_normalized(addr:str, 
-                normalized_align:float, momentary:bool=True) -> None:
+                normalized_align:float, momentary:bool=True,
+                add:bool=False
+                ) -> None:
             """Set alignment of generator by a normalized 0.0-1.0 value (Generator Only)
             normalized_align    float alignment value from 0-1 gets mapped to start-end token range
-            momentary         bool if true, set the alignment momentarily, without setting the paint bar, even if attention painting mode is off.
+            momentary           bool if true, set the alignment momentarily, without setting the paint bar, even if attention painting mode is off.
+            add                 bool if true, increment the alignment instead of setting
+
             """
+            print(f'{normalized_align=} {self.context.attention_graph.num_encodings=}')
             if momentary:
+                tokens = self.context.attention_graph.num_encodings
                 self.context.backend.set_alignment(
-                    (normalized_align*self.context.attention_graph.num_encodings, 1), 
-                    momentary=True)
+                    (normalized_align*tokens, 1), 
+                    momentary=True, add=add)
             else:
                 self.context.attention_graph.set_normalized_alignment(
-                    normalized_align)
-            print(f"Set normalized alignment {normalized_align} - forced paint?: {momentary}")
+                    normalized_align, add=add)
+            print(f"Set {normalized_align=}, {momentary=}")
 
         def osc_set_temperature(addr:str, temp:float) -> None:
             """Set generator sampling temperature (Generator Only)
@@ -758,7 +781,11 @@ class OSCController(threading.Thread):
         self.osc_dispatcher.map("/latent_feedback", osc_latent_feedback)
         self.osc_dispatcher.map("/set_gen_text", osc_set_gen_text)
         self.osc_dispatcher.map("/set_token", osc_set_alignment_as_token_idx)
+        self.osc_dispatcher.map("/add_token", 
+            partial_doc(osc_set_alignment_as_token_idx, add=True))
         self.osc_dispatcher.map("/set_alignment", osc_set_alignment_normalized)
+        self.osc_dispatcher.map("/add_alignment", 
+            partial_doc(osc_set_alignment_normalized, add=True))
         self.osc_dispatcher.map("/set_temperature", osc_set_temperature)
         self.osc_dispatcher.map("/add_temperature", osc_add_temperature)
 

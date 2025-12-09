@@ -647,7 +647,8 @@ class Backend:
         self.latent_biases = biases
 
     def set_alignment(self, 
-            align_params:Optional[Tuple[float, float]]
+            align_params:Optional[Tuple[float, float]],
+            momentary:bool = False
         ) -> None:
         """
         Send alignment parameters to the backend. If None is passed, alignment painting is off.
@@ -655,15 +656,10 @@ class Backend:
         Args:
             align_params: [loc, scale] or None
         """
-        self.align_params = align_params
-    
-    def set_momentary_alignment(self,             
-            align_params:Optional[Tuple[float, float]]
-        ) -> None:
-        """
-        Alignment will be set on the next frame only
-        """
-        self.momentary_align_params = align_params
+        if momentary:
+            self.momentary_align_params = align_params
+        else:
+            self.align_params = align_params
 
     def set_state_by_step(self, step):
         self.step_to_set = step

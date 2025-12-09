@@ -249,13 +249,10 @@ class AlignmentGraph(QtWidgets.QWidget):
     def set_normalized_alignment(self, value:float):
         """
         Sets alignment slider to a normalized position from 0-1
-
-        TODO: There's some kind of bug here when controlling via OSC, where the /set_alignment command doesn't scale properly from 0-1 to the range of tokens
-                my guess is that self.attn_slider_max_value isn't getting updated? Or something else weird is going on...
         """
-        val_as_token = int(value*self.attn_slider_max_value)
-        self.alignment_slider.setValue(val_as_token)
-        print(f"Set normalized alignment {value} - as token: {val_as_token}/{self.attn_slider_max_value}/{self.num_encodings} ")
+        slider_val = int(value*self.attn_slider_max_value)
+        self.alignment_slider.setValue(slider_val)
+        print(f"Set normalized alignment {value} - as slider val: {slider_val}/{self.attn_slider_max_value}/{self.num_encodings} ")
 
     def set_alignment_as_token_idx(self, tok:int) -> None:
         """
@@ -647,21 +644,33 @@ class OSCController(threading.Thread):
                 print("ENCODE TEXT")
                 self.context.btn_send_gen_text.click()
 
-        def osc_set_alignment_as_token_idx(addr:str, tok_idx:int, force_paint:bool=False) -> None:
+        def osc_set_alignment_as_token_idx(addr:str, 
+                tok_idx:int, momentary:bool=False) -> None:
             """Set alignment of generator by token index (Generator Only)
             token_idx           int index of token
-            force_paint         bool if true, toggles on attention painting
+            momentary         bool if true, set the alignment momentarily, without setting the paint bar, even if attention painting mode is off.
             """
-            self.context.attention_graph.set_alignment_as_token_idx(tok_idx)
-            print(f"Set alignment to token {tok_idx} - forced paint?: {force_paint}")
+            if momentary:
+                self.context.backend.set_alignment(
+                    (tok_idx, 1), momentary=True)
+            else:
+                self.context.attention_graph.set_alignment_as_token_idx(tok_idx)
+            print(f"Set alignment to token {tok_idx} - forced paint?: {momentary}")
 
-        def osc_set_alignment_normalized(addr:str, normalized_align:float, force_paint:bool=False) -> None:
+        def osc_set_alignment_normalized(addr:str, 
+                normalized_align:float, momentary:bool=True) -> None:
             """Set alignment of generator by a normalized 0.0-1.0 value (Generator Only)
             normalized_align    float alignment value from 0-1 gets mapped to start-end token range
-            force_paint         bool if true, toggles on attention painting
+            momentary         bool if true, set the alignment momentarily, without setting the paint bar, even if attention painting mode is off.
             """
-            self.context.attention_graph.set_normalized_alignment(normalized_align)
-            print(f"Set normalized alignment {normalized_align} - forced paint?: {force_paint}")
+            if momentary:
+                self.context.backend.set_alignment(
+                    (normalized_align*self.context.attention_graph.num_encodings, 1), 
+                    momentary=True)
+            else:
+                self.context.attention_graph.set_normalized_alignment(
+                    normalized_align)
+            print(f"Set normalized alignment {normalized_align} - forced paint?: {momentary}")
 
         def osc_set_temperature(addr:str, temp:float) -> None:
             """Set generator sampling temperature (Generator Only)
@@ -1241,11 +1250,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def image_clicked(self, ev):
         # print(ev.pos)
         if self.backend is not None and self.use_backend:
-            self.backend.set_momentary_alignment((ev.pos().x(), 1))
+            self.backend.set_alignment((ev.pos().x(), 1), momentary=True)
             self.backend.set_state_by_step(int(ev.pos().y()))
             self.backend.generate()
-        # self.backend.set_momentary_alignment(
-        #     self.attention_graph.get_slidervalue_as_params())
 
     def update(self):
         """

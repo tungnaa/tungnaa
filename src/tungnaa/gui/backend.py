@@ -59,6 +59,9 @@ class Profiler:
         self.mean_wall_ms = defaultdict(float)
         self.mean_proc_ms = defaultdict(float)
         self.n = defaultdict(int)
+        self.mean_intercall_ns = 0
+        self.intercall_decay = 0.95
+        self.last_toplevel_call = None
     @contextmanager
     def __call__(self, label, detail=False):
         if self.enabled:
@@ -67,7 +70,18 @@ class Profiler:
                 pr.enable()
                 # pr = torch.profiler.profile()
                 # pr.__enter__()
-            self.stack.append((time.time_ns(), time.process_time_ns()))
+            t = time.time_ns()
+            if not len(self.stack):
+                if self.last_toplevel_call is not None:
+                    dt = t-self.last_toplevel_call
+                    if self.mean_intercall_ns==0:
+                        self.mean_intercall_ns = dt
+                    else:
+                        self.mean_intercall_ns = (
+                            self.mean_intercall_ns*self.intercall_decay 
+                            + (1-self.intercall_decay) * dt)
+                self.last_toplevel_call = t
+            self.stack.append((t, time.process_time_ns()))
         yield None
         if self.enabled:
             t_wall, t_proc = self.stack.pop()
@@ -79,26 +93,45 @@ class Profiler:
             self.n[label] += 1
             self.mean_wall_ms[label] = (self.mean_wall_ms[label]*(self.n[label]-1) + wall_ms) / self.n[label]
             self.mean_proc_ms[label] = (self.mean_proc_ms[label]*(self.n[label]-1) + proc_ms) / self.n[label]
+            intercall_ms = self.mean_intercall_ns*1e-6
+            if wall_ms > intercall_ms * 0.9:
+                color = '\033[31;1m' # red
+            elif wall_ms > intercall_ms * 0.25:
+                color = '\033[33;1m' # yellow
+            else:
+                color = '\033[32;1m' # green
+            reset = '\033[0m'
+            space = '    '*len(self.stack)
+            print(
+                space, 
+                label + ' '*max(1, 16-len(label)-len(space)), 
+                color + f'wall: {int(wall_ms)} ms' + reset, 
+                f'\tcpu: {int(proc_ms)} ms', 
+                # f'\t(mean wall {int(self.mean_wall_ms[label])} ms, \tcpu {int(self.mean_proc_ms[label])} ms)'
+                )
+            if not len(self.stack):
+                print(f'inferred frame budget: {int(intercall_ms)} ms')
+                print('-'*40)
             # print(
             #     'average', ' '*len(self.stack), label, 
             #     f'wall: {int(self.mean_wall_ms[label])} ms,',
             #     f'cpu: {int(self.mean_proc_ms[label])} ms')
-            if self.n[label] > 10 and wall_ms > 2*self.mean_wall_ms[label]:
-                print(
-                    'slower than 2x average:',
-                    '  '*len(self.stack), 
-                    label, 
-                    f'wall: {int(wall_ms)} ms', 
-                    f'cpu: {int(proc_ms)} ms', 
-                    f'(average wall {int(self.mean_wall_ms[label])} ms, cpu {int(self.mean_proc_ms[label])} ms)')
-                if detail:
-                    # print(pr.key_averages().table(
-                        # sort_by="self_cpu_time_total", row_limit=4))
-                    s = io.StringIO()
-                    ps = pstats.Stats(pr, stream=s)
-                    ps.sort_stats('tottime')
-                    ps.print_stats(4)
-                    print(s.getvalue())
+            # if self.n[label] > 10 and wall_ms > 2*self.mean_wall_ms[label]:
+                # print(
+                #     'slower than 2x average:',
+                #     '  '*len(self.stack), 
+                #     label, 
+                #     f'wall: {int(wall_ms)} ms', 
+                #     f'cpu: {int(proc_ms)} ms', 
+                #     f'(average wall {int(self.mean_wall_ms[label])} ms, cpu {int(self.mean_proc_ms[label])} ms)')
+                # if detail:
+                #     # print(pr.key_averages().table(
+                #         # sort_by="self_cpu_time_total", row_limit=4))
+                #     s = io.StringIO()
+                #     ps = pstats.Stats(pr, stream=s)
+                #     ps.sort_stats('tottime')
+                #     ps.print_stats(4)
+                #     print(s.getvalue())
 
 class Utterance(list):
     def __init__(self, text):
@@ -393,11 +426,14 @@ class Backend:
         # _debug(self.model)
 
         if self.jit:
-            for m in model.modules():
-                if hasattr(m, 'parametrizations'):
-                    torch.nn.utils.parametrize.remove_parametrizations(
-                        m,'weight')
-            model = torch.jit.script(model)
+            try:
+                for m in model.modules():
+                    if hasattr(m, 'parametrizations'):
+                        torch.nn.utils.parametrize.remove_parametrizations(
+                            m,'weight')
+                model = torch.jit.script(model)
+            except Exception:
+                print('warning: jit failed')
         model.eval()
 
         self.replace_models = (model, text_model)

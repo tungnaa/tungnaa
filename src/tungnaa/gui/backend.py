@@ -301,25 +301,22 @@ class Backend:
             # sd.default.device = audio_out
             if self.vocoder_sr:
                 if audio_device and audio_device['default_samplerate'] != self.vocoder_sr:
-                    # this should not be an error. On OSX/CoreAudio you can set the device sample rate to the model sample rate.
-                    # however on Linux/JACK this throws a fatal error and stops program execution, requiring you to restart Jack to change the sampling rate
-
-                    # TODO: also check RAVE block size vs. audio device block size if possible
+                    # TODO: also check RAVE block size vs. audio device block size if possible?
                     print("\n------------------------------------");
                     print(f"WARNING: Device default sample rate ({audio_device['default_samplerate']}) and RAVE model sample rate ({self.vocoder_sr}) mismatch! You may need to change device sample rate manually on some platforms.")
                     print("------------------------------------\n");
 
-                sd.default.samplerate = self.vocoder_sr # could cause an error if device uses a different sr from model
-                print(f"RAVE SAMPLING RATE: {self.vocoder_sr}")
-                if audio_device is not None:
-                    print(f"DEVICE SAMPLING RATE: {audio_device['default_samplerate']}")
+                # sd.default.samplerate = self.vocoder_sr # could cause an error if device uses a different sr from model
+                # print(f"RAVE SAMPLING RATE: {self.vocoder_sr}")
+                # if audio_device is not None:
+                #     print(f"DEVICE SAMPLING RATE: {audio_device['default_samplerate']}")
 
-            # # TODO: Tungnaa only uses audio output. Shouldn't we always be using sd.OutputStream?
+            # revisit this if we ever add audio input
             # try:
             #     assert audio_out is not None and len(audio_out)==2
             #     stream_cls = sd.Stream
             # except Exception:
-            stream_cls = sd.OutputStream
+            # stream_cls = sd.OutputStream
 
             restart = False
             if self.stream is not None:
@@ -329,13 +326,28 @@ class Backend:
                 self.stream.close()
 
             print("creating new stream")
-            self.stream = stream_cls(
-                callback=self.audio_callback,
-                samplerate=self.vocoder_sr, 
-                blocksize=audio_block, 
-                device=audio_out,
-                channels=audio_channels
-            )
+            try:
+                # raise sd.PortAudioError("""DEBUG""")
+                self.stream = sd.OutputStream(
+                    callback=self.audio_callback,
+                    samplerate=self.vocoder_sr, 
+                    blocksize=audio_block, 
+                    device=audio_out,
+                    channels=audio_channels
+                )
+            except sd.PortAudioError:
+                # print(audio_device)
+                if audio_device is None: raise
+                print(f"falling back to {audio_device['default_samplerate']=}")
+                self.stream = sd.OutputStream(
+                    callback=self.audio_callback,
+                    samplerate=audio_device['default_samplerate'], 
+                    blocksize=audio_block, 
+                    device=audio_out,
+                    channels=audio_channels
+                )
+
+            print(f'{self.stream.blocksize=} {self.stream.samplerate=}')
 
             if restart:
                 print('starting new stream')
@@ -350,6 +362,7 @@ class Backend:
             self.stream = None
     
     def set_tts_model(self, checkpoint):
+        self.pause()
         self.tts_model_update_thread = Thread(
             target=self._update_tts_model, 
             args=(checkpoint,), daemon=True)

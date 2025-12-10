@@ -877,7 +877,7 @@ class MainWindow(QtWidgets.QMainWindow):
         audio_out:str|int=None,
         synth_audio:bool=True
         ):
-        print("MainWindow.__init__")
+        # print("MainWindow.__init__")
         super().__init__(parent)
         self.version= f"Alpha v{tungnaa.__version__}"
         self.appname= f"T̴u̮n̵g̴na͠á {self.version}"
@@ -1565,7 +1565,7 @@ def main(
     latent_osc:bool=False,
     # audio driver
     audio_out:typing.Union[str,int]=None,
-    audio_block:int=2048,
+    audio_block:int=0,
     # OSC
     osc_out_addr:str='localhost:57120',
     osc_out_path:str='/tungnaa',

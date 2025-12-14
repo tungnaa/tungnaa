@@ -36,6 +36,7 @@ from pathlib import Path
 # import numpy.typing as npt
 import torch
 from torch import Tensor
+import torch.nn.utils.parametrize
 torch.set_num_threads(1)
 
 import sounddevice as sd
@@ -658,6 +659,7 @@ class Backend:
             setattr(self, k, v)
         
         if self.text_rep is not None:
+            assert self.model is not None, "do_reset called while model is None"
             self.model.reset(self.text_rep)
             if self.align_params is None:
                 # go to loop start after reset

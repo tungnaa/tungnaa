@@ -823,7 +823,7 @@ class TacotronDecoder(nn.Module):
         in_channels=None, # text embedding dim
         frame_channels=None, # RAVE latent dim
         dropout=0.1,
-        likelihood_type='nsf',#'normal'#'mixture'#'ged'
+        likelihood_type='ged',#'normal'#'mixture'#'nsf'
         mixture_n=16,
         flow_context=256,
         flow_hidden=256,

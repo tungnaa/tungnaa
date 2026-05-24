@@ -977,7 +977,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # get remote model sources
         repos = repo.split(',') if repo is not None else []
-        remote_models_info = list(get_remote_model_info(repos))
+        try:
+            remote_models_info = list(get_remote_model_info(repos))
+        except Exception as e:
+            print(f'warning: could not reach HuggingFace ({e.__class__.__name__}), remote models unavailable')
+            remote_models_info = []
         print(f'{remote_models_info=}')
 
         # get local model sources

@@ -1655,6 +1655,10 @@ def main(
             profile=profile,
             ))
     
+    if tts is not None:
+        # manual --tts takes priority over initial_tts default
+        initial_tts = None
+
     osc_host, osc_port = osc_in_addr.split(':')
     osc_port = int(osc_port)
     print("creating main window...")

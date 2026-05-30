@@ -159,14 +159,15 @@ class JSONDataset(torch.utils.data.Dataset):
                 # capitalize first letter of style
                 if style=='neutral':
                     style = '|'
-                elif style=='aggressive':
+                elif style=='aggressive' or style=='angry':
                     style = '+'
                 elif style=='happy':
                     style = '^'
                 elif style=='worried':
                     style = '&'
                 else:
-                    print(f'warning: unrecognized style "{style}"')
+                    if style!='unknown':
+                        print(f'warning: unrecognized style "{style}"')
                     style = ''
             else:
                 style = '%'

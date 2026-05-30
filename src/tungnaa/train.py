@@ -118,16 +118,16 @@ class Trainer:
         valid_size:int = None,
         save_epochs:int = 1,
         max_epochs:int = None,
-        nll_scale:float = 1, 
-        dispersion_scale:float = 0, 
-        dispersion_cutoff:float = 0,
-        concentration_scale:float = 0, 
-        concentration_norm_scale:float = 0, 
-        concentration_cutoff:float = 0, 
+        nll_scale:float = 1., 
+        dispersion_scale:float = 0., 
+        dispersion_cutoff:float = 0.,
+        concentration_scale:float = 0., 
+        concentration_norm_scale:float = 0., 
+        concentration_cutoff:float = 0., 
         # dispersion_l2_scale:float = 0, 
         # concentration_l2_scale:float = 0, 
         # TODO: anneal_prenet = None, # number of epochs to anneal prenet dropout to zero
-        data_portion:float = 1,
+        data_portion:float = 1.,
         debug_loading:bool = False,
         jit:bool = False,
         compile:bool = False,
@@ -272,7 +272,7 @@ class Trainer:
         for tag, ds in (('train', self.train_dataset), ('valid', self.valid_dataset)):
             time_s = 0
             text_c = 0
-            for item in ds:
+            for item in tqdm(ds, desc='counting tokens and audio', leave=False):
                 time_s += item['audio'].shape[1] * self.rave_model.encode_params[3] / self.rave_model.sr
                 text_c += len(item['plain_text'])
             tqdm.write(f'{tag} dataset length: {len(ds)} utterances, {time_s} seconds, {text_c} characters')

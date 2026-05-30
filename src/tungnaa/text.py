@@ -123,11 +123,12 @@ class CanineEmbeddings(nn.Module):
         # canine-c: pre-trained with autoregressive character loss
         # canine-s: pre-trained with subword masking loss
         super().__init__()
-        self.end_tokens = [57344, 57345] if end_tokens else None
+        self.end_tokens = (57344, 57345) if end_tokens else None
         self.net = CanineModel.from_pretrained(pretrained).char_embeddings
         if not use_positions:
             self.net.position_embedding_type = None
         self.channels = 768
+            
         self.bottleneck = False
         if bottleneck:
             self.bottleneck = True
@@ -136,7 +137,7 @@ class CanineEmbeddings(nn.Module):
 
     def init(self):
         """random initialization"""
-        self.net = CanineModel(self.net.config)
+        self.net = CanineModel(self.net.config).char_embeddings
     
     def pad(self, tokens, mask=None):
         pad = 4 - tokens.shape[1]
@@ -171,6 +172,81 @@ class CanineEmbeddings(nn.Module):
         return tokenize(text, self.end_tokens)
     
 
+class CanineShallow(nn.Module):
+    """embeddings + local attention layers of CANINE (no downsampling)"""
+    def __init__(self, 
+        pretrained='google/canine-c', 
+        end_tokens=True,
+        bottleneck=False,
+        use_positions=True
+        ):
+        # canine-c: pre-trained with autoregressive character loss
+        # canine-s: pre-trained with subword masking loss
+        super().__init__()
+        self.end_tokens = (57344, 57345) if end_tokens else None
+        self.net = CanineModel.from_pretrained(pretrained)
+        if not use_positions:
+            self.net.char_embeddings.position_embedding_type = None
+        self.channels = 768
+            
+        self.bottleneck = False
+        if bottleneck:
+            self.bottleneck = True
+            self.proj = nn.Linear(self.channels, bottleneck)
+            self.channels = bottleneck
+
+    def init(self):
+        """random initialization"""
+        self.net = CanineModel(self.net.config)
+    
+    def pad(self, tokens, mask=None):
+        pad = 4 - tokens.shape[1]
+        if pad > 0:
+            tokens = torch.cat((
+                tokens, tokens.new_zeros(tokens.shape[0], pad)
+                ), 1)
+            if mask is not None:
+                mask = torch.cat((
+                    mask, mask.new_zeros(mask.shape[0], pad)
+                ), 1)
+        return tokens, mask
+
+    def forward(self, text_t, mask):
+
+        ### abridged from transformers package CanineModel.forward
+        input_char_embeddings = self.net.char_embeddings(input_ids=text_t)
+
+        if mask is None:
+            mask = text_t.new_ones(text_t.shape)
+
+        char_attention_mask = self.net._create_3d_attention_mask_from_input_mask(
+            text_t, mask)
+        init_chars_encoder_outputs = self.net.initial_char_encoder(
+            input_char_embeddings,
+            attention_mask=char_attention_mask,
+            output_attentions=False,
+            output_hidden_states=False,
+        )
+        h = init_chars_encoder_outputs.last_hidden_state
+        ###
+        
+        if self.bottleneck:
+            h = self.proj(h)
+        return h
+
+    def encode(self, text, mask=None):
+        if isinstance(text, str):
+            text, *_ = self.tokenize(text)
+        n = text.shape[1]
+        text, mask = self.pad(text, mask)
+        h = self(text, mask)
+        h = h[:, :n] #unpad
+        return h
+    
+    @torch.jit.ignore
+    def tokenize(self, text):
+        return tokenize(text, self.end_tokens)
+    
 # from coqui
 class TacotronEncoder(nn.Module):
     r"""Tacotron2 style Encoder for comparison with CANINE.

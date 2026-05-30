@@ -143,8 +143,6 @@ def main(
                 **row
             }
 
-        # raise NotImplementedError
-
     def vctk(path):
         """all speakers from VCTK"""
         path = Path(path)

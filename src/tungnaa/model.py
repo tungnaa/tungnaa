@@ -15,7 +15,7 @@ from normflows.distributions.base import ConditionalDiagGaussian
 
 import numpy as np
 
-from tungnaa.text import CanineEncoder, CanineEmbeddings, TacotronEncoder, ZeroEncoder
+from tungnaa.text import CanineEncoder, CanineEmbeddings, CanineShallow, TacotronEncoder, ZeroEncoder
 
 def hz_to_z(hz):
     return torch.where(hz>0, hz.log2() - 7., torch.zeros_like(hz))
@@ -899,6 +899,8 @@ class TacotronDecoder(nn.Module):
                 self.text_encoder = CanineEncoder(**text_encoder)
             elif text_encoder_type=='canine_embedding':
                 self.text_encoder = CanineEmbeddings(**text_encoder)
+            elif text_encoder_type=='canine_shallow':
+                self.text_encoder = CanineShallow(**text_encoder)
             else:
                 raise ValueError(text_encoder_type)
             if in_channels is None:

@@ -4,7 +4,11 @@ Training and GUI inference for interactive artistic text-to-voice models.
 
 We would love to hear your feedback on using Tungnaá in this short survey: [https://forms.gle/F97yhJ1YB5aiZPmn7](https://forms.gle/F97yhJ1YB5aiZPmn7)
 
-# Installation
+# Try it now with [uv](https://docs.astral.sh/uv/) 
+
+` uvx --with "tungnaa[gui]" tungnaa run`
+
+# Installation in a Python environment
 
 `pip install tungnaa[gui]` (if you just want to use Tungnaá)
 
@@ -120,29 +124,19 @@ If you were to use all three options, you would get:
 
 # Developing
 
-Poetry is used for packaging and dependency management. Conda is used for environments and Python version management, and may be replaced by virtualenv or similar.
+[uv](https://docs.astral.sh/uv/) is used for packaging and dependency management. After installing `uv`, to get a working dev environment:
 
-1. `cd tungnaa`
-2. `conda create -n tungnaa python=3.12 ffmpeg`
-3. `conda activate tungnaa`
-4. `poetry install`
+1. `git clone git@github.com:tungnaa/tungnaa.git`
+2. `cd tungnaa`
+3. `uv lock`
+4. `uv sync --extra gui --extra train`
 
-Note that poetry should not be installed in the project environment, but rather from the system package manager, with pipx, or in a separate environment.
+To add a dependency, use `uv add`, or edit `pyproject.toml` and then run `uv lock; uv sync`.
 
-To add a dependency, use `poetry add`, or edit `pyproject.toml` and then run `poetry lock; poetry install`.
-
-To add a model, use `dvc add /path/to/model`, then `git add /path/to/model.dvc`. Tungnaá models should go in `models/tts/`, and be accompanied by a `model.md` file. Vocoders should go in `models/vocoders`.
+Models are stored in a sister [huggingface repo](https://huggingface.co/Intelligent-Instruments-Lab/tungnaa-models-public), or in any similarly structured repo. Tungnaá models should go in `models/tts/mymodel.ckpt`, and be accompanied by a `mymodel.md` file. Vocoders should go in `models/vocoders/myvocoder.ts`.
 
 ## docs
 
 run `mkdocs serve` to build and view documentation
 
 run `mkdocs gh-deploy` to deploy to github pages
-
-# Non-Python Dependencies
-
-- Poetry (https://python-poetry.org/) for packaging
-
-# Python Dependencies
-
-See `pyproject.toml`

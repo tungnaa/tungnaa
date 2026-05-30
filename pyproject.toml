@@ -1,60 +1,69 @@
-[tool.poetry]
+[project]
 name = "tungnaa"
 version = "0.2.0"
 description = "tungnaa is a text-to-voice model family and musical instrument"
-authors = ["Victor Shepardson <victor.shepardson@gmail.com>", "Jonathan Chaim Reus <studio@jonathanreus.com>"]
-license = "modified GPLv3"
+authors = [
+    { name = "Victor Shepardson", email = "victor.shepardson@gmail.com" },
+    { name = "Jonathan Chaim Reus", email = "studio@jonathanreus.com" },
+]
+requires-python = ">=3.10,<3.14"
 readme = "README.md"
+license = "GPL-3.0-or-later"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "numpy<2.0.0",
+    "torch~=2.9.0",
+    "normflows>=1.7.3,<2",
+    "transformers>=4.27.1,<5",
+    "fire>=0.4.0,<0.8",
+    "scikit-learn>=1.6.1,<2",
+    "soundfile>=0.13.1,<0.14",
+    "huggingface-hub>=0.31.4,<0.32",
+    "markdown>=3.8,<4",
+    "markdown-full-yaml-metadata>=2.2.1,<3",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.10,<3.14"
-numpy = "<2.0.0"
-torch = "~2.6.0"
-normflows = "^1.7.3"
-transformers = "^4.27.1"
-fire = "^0.4.0"
-scikit-learn = "^1.6.1"
-soundfile = "^0.13.1"
-huggingface-hub = "^0.31.4"
-markdown = "^3.8"
-markdown-full-yaml-metadata = "^2.2.1"
+[project.optional-dependencies]
+gui = [
+    "PySide6>=6.4.3,<7,!=6.9.1",
+    "pyqtgraph>=0.13.2,<0.14",
+    "python-osc>=1.8.1,<2",
+    "sounddevice>=0.4.6,<0.5",
+]
+train = [
+    "torchcodec~=0.9.0",
+    "torchaudio~=2.9.0",
+    "tqdm>=4.64,<5",
+    "matplotlib>=3.7.1,<4",
+    "ipykernel>=6.29.4,<7",
+    "tensorboard>=2.12.0,<3",
+    "pandas>=2.2.2,<3",
+    "odfpy>=1.4.1,<2",
+]
 
-# [tool.poetry.group.train.dependencies]
-torchaudio = {version = "^2.0.0", optional = true}
-tqdm = {version = "^4.64", optional = true}
-matplotlib = {version = "^3.7.1", optional = true}
-ipykernel = {version = "^6.29.4", optional = true}
-tensorboard = {version = "^2.12.0", optional = true}
-pandas = {version = "^2.2.2", optional = true}
-odfpy = {version = "^1.4.1", optional = true}
+[project.scripts]
+tungnaa = "tungnaa.__main__:_main"
 
-PySide6 = {version = "^6.4.3,!=6.9.1", optional = true}
-pyqtgraph = {version = "^0.13.2", optional = true}
-python-osc = {version = "^1.8.1", optional = true}
-sounddevice = {version = "^0.4.6", optional = true}
-# [tool.poetry.group.gui.dependencies]
-# PySide6 = "^6.4.3"
-# pyqtgraph = "^0.13.2"
-# python-osc = "^1.8.1"
-# sounddevice = "^0.4.6"
+[dependency-groups]
+dev = [
+    "mkdocs>=1.5.3,<2",
+    "mkdocstrings[python]>=0.29.1,<0.30",
+    "mkdocs-gen-files>=0.5.0,<0.6",
+    "mkdocs-include-markdown-plugin>=6.0.4,<7",
+    "mkdocs-material>=9.4.8,<10",
+    "mkdocs-material-extensions>=1.3,<2",
+    "mkdocs-autorefs>=1.4.0,<2",
+]
 
-[tool.poetry.extras]
-gui = ["PySide6", "pyqtgraph", "python-osc", "sounddevice"]
-train = ["torchaudio", "tqdm", "matplotlib", "ipykernel", "tensorboard", "pandas", "odfpy"]
-
-
-[tool.poetry.group.dev.dependencies]
-mkdocs = "^1.5.3"
-mkdocstrings = {extras = ["python"], version = "^0.29.1"}
-mkdocs-gen-files = "^0.5.0"
-mkdocs-include-markdown-plugin = "^6.0.4"
-mkdocs-material = "^9.4.8"
-mkdocs-material-extensions = "^1.3"
-mkdocs-autorefs = "^1.4.0"
+[tool.uv]
+default-groups = "all"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.poetry.scripts]
-tungnaa = 'tungnaa.__main__:_main'
+requires = ["uv_build>=0.9.22,<0.10.0"]
+build-backend = "uv_build"

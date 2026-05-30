@@ -1,6 +1,6 @@
 [project]
 name = "tungnaa"
-version = "0.2.0"
+version = "0.3.0"
 description = "tungnaa is a text-to-voice model family and musical instrument"
 authors = [
     { name = "Victor Shepardson", email = "victor.shepardson@gmail.com" },
@@ -67,3 +67,9 @@ default-groups = "all"
 [build-system]
 requires = ["uv_build>=0.9.22,<0.10.0"]
 build-backend = "uv_build"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
